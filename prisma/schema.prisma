@@ -1,0 +1,836 @@
+// Pronto Satisfação — schema Prisma (domínio completo)
+// Multitenant por linha: toda tabela de negócio carrega `tenantId`.
+// Acesso isolado via forTenant() em src/lib/tenant.ts — mantenha TENANT_MODELS em sincronia.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Enums
+// ═══════════════════════════════════════════════════════════════
+
+enum UserRole {
+  SUPER_ADMIN
+  CLINIC_ADMIN
+  SECTOR_MANAGER
+  OPERATOR
+  VIEWER
+}
+
+enum SurveyStatus {
+  DRAFT
+  PUBLISHED
+  CLOSED
+  ARCHIVED
+}
+
+enum QuestionType {
+  NPS
+  STAR_RATING
+  EMOJI
+  MULTIPLE_CHOICE
+  TEXT
+  NUMERIC_SCALE
+  MATRIX
+  CHECKBOX
+  DROPDOWN
+  DATETIME
+  STAR_RATING_TEXT
+  RANKING
+}
+
+enum PageMode {
+  ONE_PER_PAGE
+  ALL_IN_ONE
+}
+
+enum ChannelType {
+  LINK
+  QR
+  EMAIL
+  SMS
+  WHATSAPP
+  EMBED
+}
+
+enum DispatchStatus {
+  PENDING
+  SENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  OPTED_OUT
+}
+
+enum Sentiment {
+  POSITIVE
+  NEGATIVE
+  NEUTRAL
+  MIXED
+}
+
+enum AlertType {
+  DETRACTOR
+  NEGATIVE_TREND
+  EMERGING_THEME
+  LOW_VOLUME
+}
+
+enum AlertStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+enum ReportType {
+  EXECUTIVE_MONTHLY
+  OPERATIONAL
+  BY_SECTOR
+  BY_SURVEY
+  RAW_DATA
+  PERIOD_COMPARISON
+  SENTIMENT
+}
+
+enum ReportFormat {
+  PDF
+  EXCEL
+  CSV
+}
+
+enum ScheduleFrequency {
+  DAILY
+  WEEKLY
+  BIWEEKLY
+  MONTHLY
+}
+
+enum NotificationType {
+  NEW_DETRACTOR
+  TREND_ALERT
+  WEEKLY_SUMMARY
+  REPORT_SENT
+  DISPATCH_ERROR
+  SYSTEM
+}
+
+enum SkipLogicAction {
+  SHOW
+  HIDE
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Tenant + configuração da clínica
+// ═══════════════════════════════════════════════════════════════
+
+model Tenant {
+  id       String  @id @default(cuid())
+  name     String
+  slug     String  @unique
+  timezone String  @default("America/Fortaleza")
+  logoUrl  String?
+  active   Boolean @default(true)
+
+  // Configurações gerais
+  contactEmail     String?
+  contactPhone     String?
+  address          String?
+  privacyPolicy    String? // texto LGPD exibido nos formulários
+  retentionMonths  Int               @default(24)
+  aiEnabled        Boolean           @default(true)
+  summaryFrequency ScheduleFrequency @default(WEEKLY)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users             User[]
+  sectors           Sector[]
+  touchPoints       TouchPoint[]
+  auditLogs         AuditLog[]
+  accessLogs        AccessLog[]
+  passwordResets    PasswordReset[]
+  surveys           Survey[]
+  questions         Question[]
+  questionOptions   QuestionOption[]
+  skipLogicRules    SkipLogicRule[]
+  themes            Theme[]
+  distributions     Distribution[]
+  recipients        Recipient[]
+  dispatchBatches   DispatchBatch[]
+  dispatchJobs      DispatchJob[]
+  responses         Response[]
+  answers           Answer[]
+  aiAnalyses        AIAnalysis[]
+  topicClusters     TopicCluster[]
+  execSummaries     ExecutiveSummary[]
+  alerts            Alert[]
+  alertThresholds   AlertThreshold[]
+  reports           Report[]
+  reportSchedules   ReportSchedule[]
+  reportRuns        ReportRun[]
+  notifications     Notification[]
+  apiKeys           ApiKey[]
+  webhookEndpoints  WebhookEndpoint[]
+  webhookLogs       WebhookLog[]
+  channelConfigs    ChannelConfig[]
+
+  @@map("tenants")
+}
+
+model ChannelConfig {
+  id       String      @id @default(cuid())
+  tenantId String
+  tenant   Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  channel  ChannelType
+  active   Boolean     @default(false)
+  // Segredos (SMTP, tokens) — criptografados na aplicação antes de persistir
+  config   Json
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, channel])
+  @@index([tenantId])
+  @@map("channel_configs")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Usuários, auth, auditoria
+// ═══════════════════════════════════════════════════════════════
+
+model User {
+  id           String    @id @default(cuid())
+  tenantId     String
+  tenant       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name         String
+  email        String
+  passwordHash String
+  role         UserRole  @default(VIEWER)
+  active       Boolean   @default(true)
+  totpSecret   String?
+  totpEnabled  Boolean   @default(false)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  sectors         Sector[]         @relation("SectorManagers")
+  auditLogs       AuditLog[]
+  accessLogs      AccessLog[]
+  passwordResets  PasswordReset[]
+  createdSurveys  Survey[]
+  dispatchBatches DispatchBatch[]
+  reports         Report[]
+  reportSchedules ReportSchedule[]
+  apiKeys         ApiKey[]
+  notifications   Notification[]
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+  @@map("users")
+}
+
+model PasswordReset {
+  id        String    @id @default(cuid())
+  tenantId  String
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([tenantId])
+  @@index([userId])
+  @@map("password_resets")
+}
+
+model Sector {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  slug      String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  managers User[]   @relation("SectorManagers")
+  surveys  Survey[] @relation("SurveySectors")
+
+  @@unique([tenantId, slug])
+  @@index([tenantId])
+  @@map("sectors")
+}
+
+model TouchPoint {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  slug      String
+  icon      String?
+  isDefault Boolean  @default(false)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  surveys Survey[] @relation("SurveyTouchPoints")
+
+  @@unique([tenantId, slug])
+  @@index([tenantId])
+  @@map("touch_points")
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action    String
+  entity    String?
+  entityId  String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([tenantId, createdAt])
+  @@map("audit_logs")
+}
+
+model AccessLog {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  ip        String?
+  userAgent String?
+  success   Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([userId])
+  @@map("access_logs")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Pesquisas
+// ═══════════════════════════════════════════════════════════════
+
+model Survey {
+  id              String       @id @default(cuid())
+  tenantId        String
+  tenant          Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  title           String
+  description     String?
+  slug            String
+  status          SurveyStatus @default(DRAFT)
+  coverImageUrl   String?
+  showProgress    Boolean      @default(true)
+  pageMode        PageMode     @default(ONE_PER_PAGE)
+  randomize       Boolean      @default(false)
+  allowMultiple   Boolean      @default(false)
+  responseLimit   Int?
+  opensAt         DateTime?
+  closesAt        DateTime?
+  thankYouMessage String?
+  redirectUrl     String?
+  passwordHash    String? // proteção por senha (pesquisas internas)
+
+  themeId String?
+  theme   Theme?  @relation(fields: [themeId], references: [id], onDelete: SetNull)
+
+  createdById String?
+  createdBy   User?   @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  questions      Question[]
+  skipLogicRules SkipLogicRule[]
+  distributions  Distribution[]
+  recipients     Recipient[]
+  dispatchBatches DispatchBatch[]
+  responses      Response[]
+  topicClusters  TopicCluster[]
+  alerts         Alert[]
+  sectors        Sector[]        @relation("SurveySectors")
+  touchPoints    TouchPoint[]    @relation("SurveyTouchPoints")
+
+  @@unique([tenantId, slug])
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@map("surveys")
+}
+
+model Question {
+  id          String       @id @default(cuid())
+  tenantId    String
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  surveyId    String
+  survey      Survey       @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  type        QuestionType
+  title       String
+  description String?
+  required    Boolean      @default(false)
+  order       Int
+  // config específico do tipo: escala (min/max/labels), emojis, matriz (rows/cols), etc.
+  config      Json?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  options QuestionOption[]
+  answers Answer[]
+
+  @@index([tenantId])
+  @@index([surveyId])
+  @@map("questions")
+}
+
+model QuestionOption {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  questionId String
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  label      String
+  value      String
+  order      Int
+  allowOther Boolean  @default(false)
+
+  @@index([tenantId])
+  @@index([questionId])
+  @@map("question_options")
+}
+
+model SkipLogicRule {
+  id               String          @id @default(cuid())
+  tenantId         String
+  tenant           Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  surveyId         String
+  survey           Survey          @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  // Pergunta-alvo a mostrar/ocultar
+  targetQuestionId String
+  action           SkipLogicAction @default(SHOW)
+  // "AND" | "OR" entre as condições
+  join             String          @default("AND")
+  // Array de condições: [{ questionId, operator, value }]
+  conditions       Json
+  order            Int             @default(0)
+  createdAt        DateTime        @default(now())
+
+  @@index([tenantId])
+  @@index([surveyId])
+  @@map("skip_logic_rules")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Tema / personalização visual
+// ═══════════════════════════════════════════════════════════════
+
+model Theme {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  isPreset  Boolean  @default(false)
+  isDefault Boolean  @default(false)
+  // cores, tipografia, layout, customCss
+  config    Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  surveys Survey[]
+
+  @@index([tenantId])
+  @@map("themes")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Distribuição / canais
+// ═══════════════════════════════════════════════════════════════
+
+model Distribution {
+  id            String      @id @default(cuid())
+  tenantId      String
+  tenant        Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  surveyId      String
+  survey        Survey      @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  channel       ChannelType
+  slug          String? // para LINK/QR
+  config        Json?
+  sentCount     Int         @default(0)
+  openCount     Int         @default(0)
+  clickCount    Int         @default(0)
+  responseCount Int         @default(0)
+  createdAt     DateTime    @default(now())
+
+  responses Response[]
+
+  @@unique([tenantId, slug])
+  @@index([tenantId])
+  @@index([surveyId])
+  @@map("distributions")
+}
+
+model Recipient {
+  id         String    @id @default(cuid())
+  tenantId   String
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  surveyId   String
+  survey     Survey    @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  name       String?
+  email      String?
+  phone      String?
+  sector     String?
+  attendedAt DateTime?
+  token      String    @unique
+  optedOut   Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+
+  responses    Response[]
+  dispatchJobs DispatchJob[]
+
+  @@index([tenantId])
+  @@index([surveyId])
+  @@map("recipients")
+}
+
+model DispatchBatch {
+  id          String         @id @default(cuid())
+  tenantId    String
+  tenant      Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  surveyId    String
+  survey      Survey         @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  channel     ChannelType
+  status      DispatchStatus @default(PENDING)
+  total       Int            @default(0)
+  sent        Int            @default(0)
+  failed      Int            @default(0)
+  scheduledAt DateTime?
+  createdById String?
+  createdBy   User?          @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime       @default(now())
+
+  jobs DispatchJob[]
+
+  @@index([tenantId])
+  @@index([surveyId])
+  @@map("dispatch_batches")
+}
+
+model DispatchJob {
+  id          String         @id @default(cuid())
+  tenantId    String
+  tenant      Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  batchId     String
+  batch       DispatchBatch  @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  recipientId String?
+  recipient   Recipient?     @relation(fields: [recipientId], references: [id], onDelete: SetNull)
+  channel     ChannelType
+  status      DispatchStatus @default(PENDING)
+  error       String?
+  sentAt      DateTime?
+  deliveredAt DateTime?
+  readAt      DateTime?
+
+  @@index([tenantId])
+  @@index([batchId])
+  @@index([recipientId])
+  @@map("dispatch_jobs")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Respostas
+// ═══════════════════════════════════════════════════════════════
+
+model Response {
+  id             String        @id @default(cuid())
+  tenantId       String
+  tenant         Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  surveyId       String
+  survey         Survey        @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  distributionId String?
+  distribution   Distribution? @relation(fields: [distributionId], references: [id], onDelete: SetNull)
+  recipientId    String?
+  recipient      Recipient?    @relation(fields: [recipientId], references: [id], onDelete: SetNull)
+
+  channel    ChannelType @default(LINK)
+  deviceType String? // mobile / tablet / desktop
+  os         String?
+  browser    String?
+  durationMs Int?
+  npsScore   Int? // denormalizado para analytics rápido
+  completed  Boolean     @default(false)
+  consentAt  DateTime?
+  ipHash     String? // IP hasheado (LGPD)
+  anonymous  Boolean     @default(false)
+  createdAt  DateTime    @default(now())
+
+  answers    Answer[]
+  aiAnalysis AIAnalysis?
+
+  @@index([tenantId])
+  @@index([surveyId])
+  @@index([distributionId])
+  @@index([recipientId])
+  @@index([tenantId, createdAt])
+  @@map("responses")
+}
+
+model Answer {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  responseId String
+  response   Response @relation(fields: [responseId], references: [id], onDelete: Cascade)
+  questionId String
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  // valor tipado conforme o tipo da pergunta
+  value      Json
+  createdAt  DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([responseId])
+  @@index([questionId])
+  @@map("answers")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Inteligência artificial
+// ═══════════════════════════════════════════════════════════════
+
+model AIAnalysis {
+  id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  responseId  String    @unique
+  response    Response  @relation(fields: [responseId], references: [id], onDelete: Cascade)
+  sentiment   Sentiment
+  intensity   Int // 0-100
+  emotions    Json? // ["frustração", "gratidão", ...]
+  summary     String?
+  processedAt DateTime  @default(now())
+
+  @@index([tenantId])
+  @@map("ai_analyses")
+}
+
+model TopicCluster {
+  id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  surveyId    String?
+  survey      Survey?   @relation(fields: [surveyId], references: [id], onDelete: SetNull)
+  label       String
+  volume      Int       @default(0)
+  sentiment   Sentiment @default(NEUTRAL)
+  trend       Float     @default(0) // variação % vs período anterior
+  periodStart DateTime
+  periodEnd   DateTime
+  sampleResponseIds Json?
+  createdAt   DateTime  @default(now())
+
+  @@index([tenantId])
+  @@map("topic_clusters")
+}
+
+model ExecutiveSummary {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  periodStart DateTime
+  periodEnd   DateTime
+  content     String
+  npsAvg      Float?
+  generatedBy String   @default("auto") // auto | manual
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([tenantId, createdAt])
+  @@map("executive_summaries")
+}
+
+model Alert {
+  id             String      @id @default(cuid())
+  tenantId       String
+  tenant         Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  type           AlertType
+  status         AlertStatus @default(OPEN)
+  title          String
+  message        String
+  metadata       Json?
+  surveyId       String?
+  survey         Survey?     @relation(fields: [surveyId], references: [id], onDelete: SetNull)
+  acknowledgedAt DateTime?
+  createdAt      DateTime    @default(now())
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@map("alerts")
+}
+
+model AlertThreshold {
+  id        String    @id @default(cuid())
+  tenantId  String
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  type      AlertType
+  config    Json // limiares específicos
+  active    Boolean   @default(true)
+  updatedAt DateTime  @updatedAt
+
+  @@unique([tenantId, type])
+  @@index([tenantId])
+  @@map("alert_thresholds")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Relatórios
+// ═══════════════════════════════════════════════════════════════
+
+model Report {
+  id            String       @id @default(cuid())
+  tenantId      String
+  tenant        Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  type          ReportType
+  format        ReportFormat
+  filters       Json?
+  fileUrl       String?
+  status        String       @default("pending") // pending | ready | failed
+  generatedById String?
+  generatedBy   User?        @relation(fields: [generatedById], references: [id], onDelete: SetNull)
+  createdAt     DateTime     @default(now())
+
+  runs ReportRun[]
+
+  @@index([tenantId])
+  @@map("reports")
+}
+
+model ReportSchedule {
+  id          String            @id @default(cuid())
+  tenantId    String
+  tenant      Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  type        ReportType
+  format      ReportFormat
+  filters     Json?
+  frequency   ScheduleFrequency
+  recipients  String[]
+  hour        Int               @default(8)
+  active      Boolean           @default(true)
+  lastRunAt   DateTime?
+  createdById String?
+  createdBy   User?             @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime          @default(now())
+
+  runs ReportRun[]
+
+  @@index([tenantId])
+  @@map("report_schedules")
+}
+
+model ReportRun {
+  id         String          @id @default(cuid())
+  tenantId   String
+  tenant     Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  scheduleId String?
+  schedule   ReportSchedule? @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
+  reportId   String?
+  report     Report?         @relation(fields: [reportId], references: [id], onDelete: SetNull)
+  status     String          @default("pending")
+  sentTo     String[]
+  error      String?
+  createdAt  DateTime        @default(now())
+
+  @@index([tenantId])
+  @@map("report_runs")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Notificações
+// ═══════════════════════════════════════════════════════════════
+
+model Notification {
+  id        String           @id @default(cuid())
+  tenantId  String
+  tenant    Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId    String?
+  user      User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  title     String
+  body      String?
+  read      Boolean          @default(false)
+  archived  Boolean          @default(false)
+  metadata  Json?
+  createdAt DateTime         @default(now())
+
+  @@index([tenantId])
+  @@index([userId])
+  @@index([tenantId, read])
+  @@map("notifications")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// API & Webhooks (integração externa / Amigo Tech)
+// ═══════════════════════════════════════════════════════════════
+
+model ApiKey {
+  id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  keyHash     String    @unique
+  prefix      String // primeiros caracteres para exibição
+  scopes      String[]
+  lastUsedAt  DateTime?
+  active      Boolean   @default(true)
+  createdById String?
+  createdBy   User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime  @default(now())
+
+  @@index([tenantId])
+  @@map("api_keys")
+}
+
+model WebhookEndpoint {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  url       String
+  events    String[]
+  secret    String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  logs WebhookLog[]
+
+  @@index([tenantId])
+  @@map("webhook_endpoints")
+}
+
+model WebhookLog {
+  id         String           @id @default(cuid())
+  tenantId   String
+  tenant     Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  endpointId String?
+  endpoint   WebhookEndpoint? @relation(fields: [endpointId], references: [id], onDelete: SetNull)
+  direction  String // "in" | "out"
+  event      String
+  payload    Json?
+  statusCode Int?
+  success    Boolean          @default(true)
+  createdAt  DateTime         @default(now())
+
+  @@index([tenantId])
+  @@index([endpointId])
+  @@map("webhook_logs")
+}

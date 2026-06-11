@@ -1,0 +1,191 @@
+"use server";
+
+import crypto from "crypto";
+import { headers } from "next/headers";
+import { z } from "zod";
+import { SurveyStatus, ChannelType } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
+import { parseUserAgent } from "@/lib/user-agent";
+import { enqueueAnalyzeResponse } from "@/server/queues";
+
+const answerSchema = z.object({
+  questionId: z.string(),
+  value: z.unknown(),
+});
+
+const submitSchema = z.object({
+  surveyId: z.string(),
+  tenantId: z.string(),
+  distributionId: z.string().optional(),
+  recipientToken: z.string().optional(),
+  answers: z.array(answerSchema),
+  consentGiven: z.boolean(),
+  startedAt: z.number(),
+  anonymous: z.boolean().default(false),
+});
+
+export type SubmitResult =
+  | { ok: true; responseId: string }
+  | { ok: false; error: string };
+
+/** Sinaliza limite de respostas atingido dentro da transação. */
+class ResponseLimitError extends Error {}
+
+export async function submitResponse(input: unknown): Promise<SubmitResult> {
+  const parsed = submitSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: "Dados inválidos." };
+  const d = parsed.data;
+
+  // Busca pela survey apenas pelo id: o tenantId é DERIVADO da survey, nunca
+  // confiado a partir do input do cliente (evita IDOR / cross-tenant).
+  const survey = await prisma.survey.findUnique({
+    where: { id: d.surveyId },
+    include: {
+      questions: { orderBy: { order: "asc" } },
+      tenant: { select: { privacyPolicy: true } },
+    },
+  });
+  if (!survey) return { ok: false, error: "Pesquisa não encontrada." };
+
+  // Fonte da verdade para o tenant é a própria survey.
+  const tenantId = survey.tenantId;
+
+  if (survey.status !== SurveyStatus.PUBLISHED) {
+    return { ok: false, error: "Esta pesquisa não está ativa." };
+  }
+
+  const now = new Date();
+  if (survey.opensAt && now < survey.opensAt) {
+    return { ok: false, error: "Esta pesquisa ainda não está aberta." };
+  }
+  if (survey.closesAt && now > survey.closesAt) {
+    return { ok: false, error: "Esta pesquisa foi encerrada." };
+  }
+
+  // Validate required answers
+  for (const q of survey.questions) {
+    if (!q.required) continue;
+    const answer = d.answers.find((a) => a.questionId === q.id);
+    const val = answer?.value;
+    if (
+      val === null ||
+      val === undefined ||
+      val === "" ||
+      (Array.isArray(val) && val.length === 0)
+    ) {
+      return { ok: false, error: `Resposta obrigatória: ${q.title}` };
+    }
+  }
+
+  // Recipient lookup + duplicate guard
+  let recipientId: string | undefined;
+  if (d.recipientToken) {
+    const recipient = await prisma.recipient.findUnique({
+      where: { token: d.recipientToken },
+      select: { id: true, surveyId: true, tenantId: true, optedOut: true },
+    });
+    if (recipient && recipient.surveyId === d.surveyId && recipient.tenantId === tenantId) {
+      if (recipient.optedOut) return { ok: false, error: "Você optou por não participar." };
+      if (!survey.allowMultiple) {
+        const existing = await prisma.response.findFirst({
+          where: { surveyId: d.surveyId, recipientId: recipient.id, completed: true },
+          select: { id: true },
+        });
+        if (existing) return { ok: false, error: "Você já respondeu esta pesquisa." };
+      }
+      recipientId = recipient.id;
+    }
+  }
+
+  // IP hash (LGPD)
+  const hdrs = await headers();
+  const ua = hdrs.get("user-agent") ?? "";
+  const rawIp =
+    hdrs.get("x-forwarded-for")?.split(",")[0].trim() ?? hdrs.get("x-real-ip") ?? "";
+  const ipHash = rawIp
+    ? crypto.createHash("sha256").update(rawIp).digest("hex").slice(0, 20)
+    : null;
+
+  const { deviceType, os, browser } = parseUserAgent(ua);
+
+  const npsQ = survey.questions.find((q) => q.type === "NPS");
+  const npsAns = npsQ ? d.answers.find((a) => a.questionId === npsQ.id) : null;
+  const npsScore = npsAns != null ? Number(npsAns.value) : null;
+  const durationMs = now.getTime() - d.startedAt;
+
+  // Valida que a distribution informada pertence a esta survey/tenant.
+  let distributionId: string | null = null;
+  if (d.distributionId) {
+    const dist = await prisma.distribution.findUnique({
+      where: { id: d.distributionId },
+      select: { id: true, tenantId: true, surveyId: true },
+    });
+    if (dist && dist.tenantId === tenantId && dist.surveyId === d.surveyId) {
+      distributionId = dist.id;
+    }
+  }
+
+  let response;
+  try {
+    response = await prisma.$transaction(async (tx) => {
+      // Checagem de limite DENTRO da transação (evita TOCTOU race).
+      if (survey.responseLimit) {
+        const count = await tx.response.count({
+          where: { tenantId, surveyId: d.surveyId, completed: true },
+        });
+        if (count >= survey.responseLimit) {
+          throw new ResponseLimitError();
+        }
+      }
+
+      const r = await tx.response.create({
+        data: {
+          tenantId,
+          surveyId: d.surveyId,
+          distributionId,
+          recipientId: recipientId ?? null,
+          channel: ChannelType.LINK,
+          deviceType,
+          os,
+          browser,
+          durationMs: durationMs > 0 ? durationMs : null,
+          npsScore: npsScore !== null && !isNaN(npsScore) ? npsScore : null,
+          completed: true,
+          consentAt: d.consentGiven ? now : null,
+          ipHash,
+          anonymous: d.anonymous,
+          answers: {
+            create: d.answers.map((a) => ({
+              tenantId,
+              questionId: a.questionId,
+              value: (a.value ?? null) as object,
+            })),
+          },
+        },
+      });
+
+      if (distributionId) {
+        await tx.distribution.update({
+          where: { id: distributionId },
+          data: { responseCount: { increment: 1 } },
+        });
+      }
+
+      return r;
+    });
+  } catch (err) {
+    if (err instanceof ResponseLimitError) {
+      return { ok: false, error: "Limite de respostas atingido." };
+    }
+    throw err;
+  }
+
+  // Enqueue AI analysis (non-blocking)
+  try {
+    await enqueueAnalyzeResponse({ responseId: response.id, tenantId });
+  } catch {
+    // non-critical — worker may not be running locally
+  }
+
+  return { ok: true, responseId: response.id };
+}
