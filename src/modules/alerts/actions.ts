@@ -4,6 +4,68 @@ import { revalidatePath } from "next/cache";
 import { AlertType } from "@prisma/client";
 import { requirePermission } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { getWhatsAppProvider } from "@/lib/channels/whatsapp";
+
+async function notifyWhatsAppAlert(tenantId: string, npsScore: number, surveyId: string) {
+  try {
+    // 1. Obter a configuração do threshold para ver se há telefones configurados
+    const threshold = await prisma.alertThreshold.findUnique({
+      where: { tenantId_type: { tenantId, type: AlertType.DETRACTOR } },
+    });
+
+    let phones: string[] = [];
+    if (threshold?.config) {
+      const cfg = threshold.config as Record<string, unknown>;
+      if (typeof cfg.notificationPhones === "string" && cfg.notificationPhones.trim()) {
+        phones = cfg.notificationPhones.split(",").map((p) => p.trim());
+      } else if (Array.isArray(cfg.notificationPhones)) {
+        phones = cfg.notificationPhones.map((p) => String(p).trim());
+      }
+    }
+
+    // 2. Fallback para o telefone de contato do tenant
+    if (phones.length === 0) {
+      const tenant = await prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { contactPhone: true },
+      });
+      if (tenant?.contactPhone) {
+        phones.push(tenant.contactPhone);
+      }
+    }
+
+    if (phones.length === 0) {
+      console.log(`[alerts:whatsapp] Nenhum telefone cadastrado para o tenant ${tenantId}`);
+      return;
+    }
+
+    // 3. Obter dados da pesquisa
+    const survey = await prisma.survey.findUnique({
+      where: { id: surveyId },
+      select: { title: true },
+    });
+
+    // 4. Enviar mensagem de WhatsApp via provider para cada telefone
+    const provider = getWhatsAppProvider();
+    for (const phone of phones) {
+      const res = await provider.send({
+        to: phone,
+        templateName: "alerta_detrator",
+        variables: {
+          "1": String(npsScore),
+          "2": survey?.title ?? "Pesquisa",
+        },
+      });
+      if (res.success) {
+        console.log(`[alerts:whatsapp] Notificação enviada para ${phone}`);
+      } else {
+        console.error(`[alerts:whatsapp] Falha ao enviar para ${phone}: ${res.error}`);
+      }
+    }
+  } catch (err) {
+    console.error(`[alerts:whatsapp] Erro ao enviar notificação WhatsApp:`, err);
+  }
+}
 
 /** Check and create alerts after a new response is submitted. */
 export async function checkAlerts(tenantId: string, surveyId: string, npsScore: number | null) {
@@ -23,6 +85,9 @@ export async function checkAlerts(tenantId: string, surveyId: string, npsScore: 
           message: `Uma resposta com NPS ${npsScore} foi registrada, indicando um detrator (abaixo de ${limit}).`,
           surveyId,
         });
+
+        // Dispara notificação no WhatsApp (Close-Loop)
+        await notifyWhatsAppAlert(tenantId, npsScore, surveyId);
       }
     }
 

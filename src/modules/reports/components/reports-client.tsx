@@ -17,13 +17,13 @@ type Report = {
 };
 
 const REPORT_TYPES = [
-  { value: "RESPONSES_RAW", label: "Respostas brutas" },
-  { value: "NPS_EVOLUTION", label: "Evolução NPS" },
-  { value: "CSAT_SUMMARY", label: "Resumo CSAT" },
-  { value: "SECTOR_COMPARISON", label: "Comparação por setor" },
-  { value: "TOUCHPOINT_ANALYSIS", label: "Análise por ponto de contato" },
-  { value: "AI_INSIGHTS", label: "Insights de IA" },
-  { value: "FULL_REPORT", label: "Relatório completo" },
+  { value: "RAW_DATA", label: "Respostas brutas" },
+  { value: "EXECUTIVE_MONTHLY", label: "Relatório Executivo Mensal" },
+  { value: "OPERATIONAL", label: "Relatório Operacional" },
+  { value: "BY_SECTOR", label: "Comparação por Setor" },
+  { value: "BY_SURVEY", label: "Comparação por Pesquisa" },
+  { value: "PERIOD_COMPARISON", label: "Comparação de Período" },
+  { value: "SENTIMENT", label: "Análise de Sentimento" },
 ];
 
 const FORMAT_OPTIONS = [
@@ -41,7 +41,7 @@ const STATUS_BADGES: Record<string, string> = {
 
 export function ReportsClient({ reports: initialReports }: { reports: Report[] }) {
   const [reports, setReports] = useState(initialReports);
-  const [type, setType] = useState("RESPONSES_RAW");
+  const [type, setType] = useState("RAW_DATA");
   const [format, setFormat] = useState("EXCEL");
   const [pending, start] = useTransition();
 

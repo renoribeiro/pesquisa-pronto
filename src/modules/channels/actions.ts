@@ -4,7 +4,8 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { ChannelType } from "@prisma/client";
 import { requirePermission } from "@/lib/session";
-import { enqueueEmail } from "@/server/queues";
+import { enqueueDispatch } from "@/server/queues";
+import { generateToken } from "@/lib/tokens";
 
 export async function getOrCreateLinkDistribution(surveyId: string) {
   const { ctx, db } = await requirePermission("survey:create");
@@ -47,8 +48,6 @@ export async function dispatchSurveyByEmail(input: unknown) {
   });
   if (!survey) throw new Error("Pesquisa não encontrada.");
 
-  const surveyUrl = `${data.baseUrl}/p/${survey.slug}`;
-
   // Create or get email distribution
   let dist = await db.distribution.findFirst({
     where: { surveyId: data.surveyId, channel: ChannelType.EMAIL },
@@ -66,24 +65,39 @@ export async function dispatchSurveyByEmail(input: unknown) {
       surveyId: data.surveyId,
       channel: ChannelType.EMAIL,
       total: data.recipients.length,
+      config: { subject: data.subject },
       createdById: ctx.userId,
     },
   });
 
-  // Enqueue one email per recipient
+  // Create recipients, jobs, and enqueue
   for (const r of data.recipients) {
-    await enqueueEmail({
-      to: r.email,
-      subject: data.subject,
-      html: buildEmailHtml(survey.title, r.name, surveyUrl),
-      text: `${r.name ? `Olá ${r.name},\n\n` : ""}Você foi convidado(a) para responder a pesquisa "${survey.title}".\n\nAcesse: ${surveyUrl}\n\nObrigado!`,
+    const token = generateToken();
+    const recipient = await db.recipient.create({
+      data: {
+        tenantId: ctx.tenantId,
+        surveyId: data.surveyId,
+        name: r.name ?? null,
+        email: r.email,
+        token,
+      },
+    });
+
+    const job = await db.dispatchJob.create({
+      data: {
+        tenantId: ctx.tenantId,
+        batchId: batch.id,
+        recipientId: recipient.id,
+        channel: ChannelType.EMAIL,
+        status: "PENDING",
+      },
+    });
+
+    await enqueueDispatch({
+      dispatchJobId: job.id,
+      tenantId: ctx.tenantId,
     });
   }
-
-  await db.dispatchBatch.update({
-    where: { id: batch.id },
-    data: { sent: data.recipients.length, status: "SENT" },
-  });
 
   await db.distribution.update({
     where: { id: dist.id },
@@ -92,26 +106,4 @@ export async function dispatchSurveyByEmail(input: unknown) {
 
   revalidatePath(`/admin/surveys/${data.surveyId}`);
   return { sent: data.recipients.length };
-}
-
-function buildEmailHtml(title: string, name: string | undefined, url: string): string {
-  const greeting = name ? `Olá <strong>${name}</strong>,` : "Olá,";
-  return `<!DOCTYPE html>
-<html lang="pt-BR">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
-<body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;color:#333">
-  <h2 style="color:#1a1a2e">${title}</h2>
-  <p>${greeting}</p>
-  <p>Você foi convidado(a) para responder a pesquisa de satisfação <strong>${title}</strong>.</p>
-  <p>Sua opinião é muito importante para nós. A pesquisa leva apenas alguns minutos.</p>
-  <p style="margin:32px 0">
-    <a href="${url}" style="background:#6366f1;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:bold">
-      Responder pesquisa
-    </a>
-  </p>
-  <p style="font-size:12px;color:#666">Ou acesse: <a href="${url}">${url}</a></p>
-  <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
-  <p style="font-size:11px;color:#999">Se não deseja receber mensagens, ignore este email.</p>
-</body>
-</html>`;
 }

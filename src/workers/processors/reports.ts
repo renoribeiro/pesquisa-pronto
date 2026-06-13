@@ -67,7 +67,7 @@ async function generateExcelReport(
 
   const sheet = workbook.addWorksheet("Respostas");
 
-  if (type === "RESPONSES_RAW") {
+  if (type === "RAW_DATA" || type === "RESPONSES_RAW") {
     const responses = await prisma.response.findMany({
       where: { tenantId, completed: true },
       orderBy: { createdAt: "desc" },

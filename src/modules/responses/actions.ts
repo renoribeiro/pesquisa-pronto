@@ -7,6 +7,8 @@ import { SurveyStatus, ChannelType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { parseUserAgent } from "@/lib/user-agent";
 import { enqueueAnalyzeResponse } from "@/server/queues";
+import { checkAlerts } from "@/modules/alerts/actions";
+import { rateLimit } from "@/lib/rate-limit";
 
 const answerSchema = z.object({
   questionId: z.string(),
@@ -62,6 +64,13 @@ export async function submitResponse(input: unknown): Promise<SubmitResult> {
     return { ok: false, error: "Esta pesquisa foi encerrada." };
   }
 
+  // Validate that all answered questions belong to this survey (E3)
+  const validQuestionIds = new Set(survey.questions.map((q) => q.id));
+  const hasInvalid = d.answers.some((a) => !validQuestionIds.has(a.questionId));
+  if (hasInvalid) {
+    return { ok: false, error: "Contém respostas a perguntas inválidas para esta pesquisa." };
+  }
+
   // Validate required answers
   for (const q of survey.questions) {
     if (!q.required) continue;
@@ -107,6 +116,14 @@ export async function submitResponse(input: unknown): Promise<SubmitResult> {
     : null;
 
   const { deviceType, os, browser } = parseUserAgent(ua);
+
+  // Rate Limit (E5)
+  if (ipHash) {
+    const limitResult = await rateLimit(`submit:${ipHash}:${d.surveyId}`, 10, 3600);
+    if (!limitResult.allowed) {
+      return { ok: false, error: "Muitas respostas enviadas deste dispositivo. Tente novamente mais tarde." };
+    }
+  }
 
   const npsQ = survey.questions.find((q) => q.type === "NPS");
   const npsAns = npsQ ? d.answers.find((a) => a.questionId === npsQ.id) : null;
@@ -178,6 +195,13 @@ export async function submitResponse(input: unknown): Promise<SubmitResult> {
       return { ok: false, error: "Limite de respostas atingido." };
     }
     throw err;
+  }
+
+  // Check and trigger alerts
+  try {
+    await checkAlerts(tenantId, d.surveyId, npsScore);
+  } catch (err) {
+    console.error(`[submitResponse] erro ao checar alertas:`, err);
   }
 
   // Enqueue AI analysis (non-blocking)

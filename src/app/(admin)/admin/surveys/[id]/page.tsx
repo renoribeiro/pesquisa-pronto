@@ -30,9 +30,10 @@ export default async function SurveyEditPage({ params }: { params: Promise<{ id:
   });
   if (!survey) notFound();
 
-  const [sectors, touchPoints] = await Promise.all([
+  const [sectors, touchPoints, themes] = await Promise.all([
     db.sector.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
     db.touchPoint.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
+    db.theme.findMany({ orderBy: { name: "asc" } }),
   ]);
 
   const questions: BuilderQuestion[] = survey.questions.map((q) => ({
@@ -77,9 +78,11 @@ export default async function SurveyEditPage({ params }: { params: Promise<{ id:
         rules,
         sectorIds: survey.sectors.map((s) => s.id),
         touchPointIds: survey.touchPoints.map((t) => t.id),
+        themeId: survey.themeId ?? "",
       }}
       sectors={sectors.map((s) => ({ id: s.id, name: s.name }))}
       touchPoints={touchPoints.map((t) => ({ id: t.id, name: t.name }))}
+      themes={themes.map((t) => ({ id: t.id, name: t.name }))}
     />
       <div className="space-y-2">
         <h2 className="text-lg font-semibold">Distribuição</h2>

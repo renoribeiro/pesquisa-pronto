@@ -74,16 +74,5 @@ export default async function EmbedSurveyPage({
     rules,
   };
 
-  return (
-    <html lang="pt-BR">
-      <head>
-        <meta charSet="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>{survey.title}</title>
-      </head>
-      <body>
-        <PublicForm survey={publicSurvey} />
-      </body>
-    </html>
-  );
+  return <PublicForm survey={publicSurvey} />;
 }

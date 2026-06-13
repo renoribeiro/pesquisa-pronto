@@ -46,9 +46,11 @@ async function sendDispatchJob({ dispatchJobId, tenantId }: DispatchJobPayload) 
       case "EMAIL": {
         const to = recipient?.email;
         if (!to) throw new Error("Destinatário sem email.");
+        const batchConfig = (dispatchJob.batch.config as Record<string, unknown>) ?? {};
+        const subject = String(batchConfig.subject ?? `Pesquisa de satisfação — ${survey.title}`);
         await enqueueEmail({
           to,
-          subject: `Pesquisa de satisfação — ${survey.title}`,
+          subject,
           html: buildEmailHtml(survey.title, recipient?.name ?? undefined, surveyUrl),
           text: `Olá${recipient?.name ? ` ${recipient.name}` : ""}! Responda nossa pesquisa: ${surveyUrl}`,
         });

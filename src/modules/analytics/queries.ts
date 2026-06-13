@@ -1,4 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
+import type { TenantClient } from "@/lib/tenant";
+
+export type DbClient = PrismaClient | TenantClient;
 
 export interface NpsSummary {
   score: number;
@@ -24,7 +27,7 @@ export interface SectorBreakdown {
 }
 
 export async function getNpsSummary(
-  db: PrismaClient,
+  db: DbClient,
   tenantId: string,
   surveyId?: string,
 ): Promise<NpsSummary> {
@@ -57,7 +60,7 @@ export async function getNpsSummary(
 }
 
 export async function getResponsesByDay(
-  db: PrismaClient,
+  db: DbClient,
   tenantId: string,
   days = 30,
   surveyId?: string,
@@ -86,20 +89,23 @@ export async function getResponsesByDay(
 }
 
 export async function getChannelBreakdown(
-  db: PrismaClient,
+  db: DbClient,
   tenantId: string,
   surveyId?: string,
 ): Promise<ChannelBreakdown[]> {
+  // @ts-expect-error - Prisma union type signature overload complexity
   const grouped = await db.response.groupBy({
     by: ["channel"],
     where: { tenantId, completed: true, ...(surveyId ? { surveyId } : {}) },
     _count: { channel: true },
   });
-  return grouped.map((g) => ({ channel: g.channel, count: g._count.channel }));
+  return (
+    grouped as Array<{ channel: string; _count: { channel: number } }>
+  ).map((g) => ({ channel: g.channel, count: g._count.channel }));
 }
 
 export async function getRecentResponses(
-  db: PrismaClient,
+  db: DbClient,
   tenantId: string,
   limit = 10,
   surveyId?: string,
@@ -124,7 +130,7 @@ export async function getRecentResponses(
   });
 }
 
-export async function getKpiCounts(db: PrismaClient, tenantId: string) {
+export async function getKpiCounts(db: DbClient, tenantId: string) {
   const [totalResponses, activeSurveys, openAlerts] = await Promise.all([
     db.response.count({ where: { tenantId, completed: true } }),
     db.survey.count({ where: { tenantId, status: "PUBLISHED" } }),

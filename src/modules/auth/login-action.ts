@@ -2,6 +2,7 @@
 
 import { AuthError } from "next-auth";
 import { signIn } from "@/auth";
+import { rateLimit } from "@/lib/rate-limit";
 
 export interface LoginState {
   error?: string;
@@ -13,11 +14,28 @@ export interface LoginState {
  */
 export async function authenticate(_prev: LoginState, formData: FormData): Promise<LoginState> {
   try {
+    const email = formData.get("email") as string;
+    const password = formData.get("password") as string;
+    const totp = (formData.get("totp") as string) || "";
+    const tenantSlug = formData.get("tenantSlug") as string | null;
+
+    if (!email || !password) {
+      return { error: "Email e senha são obrigatórios." };
+    }
+
+    // Rate Limit (E5)
+    const rateLimitResult = await rateLimit(`login:${email}`, 5, 900);
+    if (!rateLimitResult.allowed) {
+      return {
+        error: `Muitas tentativas de login. Bloqueado por ${rateLimitResult.resetInSeconds} segundos.`,
+      };
+    }
+
     await signIn("credentials", {
-      email: formData.get("email"),
-      password: formData.get("password"),
-      totp: formData.get("totp"),
-      tenantSlug: formData.get("tenantSlug"),
+      email,
+      password,
+      totp,
+      ...(tenantSlug && tenantSlug !== "null" ? { tenantSlug } : {}),
       redirectTo: "/admin",
     });
     return {};

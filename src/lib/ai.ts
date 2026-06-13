@@ -1,7 +1,9 @@
 import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 import { env } from "@/lib/env";
 
 let _client: Anthropic | null = null;
+let _openai: OpenAI | null = null;
 
 export function getAnthropicClient(): Anthropic {
   if (!_client) {
@@ -10,6 +12,27 @@ export function getAnthropicClient(): Anthropic {
     _client = new Anthropic({ apiKey });
   }
   return _client;
+}
+
+export function getOpenAIClient(): OpenAI {
+  if (!_openai) {
+    const apiKey = env.OPENAI_API_KEY;
+    if (!apiKey) throw new Error("OPENAI_API_KEY não configurada.");
+    _openai = new OpenAI({ apiKey });
+  }
+  return _openai;
+}
+
+export async function generateEmbedding(text: string): Promise<number[]> {
+  if (!text.trim()) {
+    return new Array(1536).fill(0);
+  }
+  const openai = getOpenAIClient();
+  const response = await openai.embeddings.create({
+    model: "text-embedding-3-small",
+    input: text,
+  });
+  return response.data[0].embedding;
 }
 
 export type SentimentResult = {

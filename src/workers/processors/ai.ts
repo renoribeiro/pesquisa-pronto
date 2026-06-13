@@ -1,6 +1,6 @@
 import type { Job } from "bullmq";
 import { prisma } from "@/lib/prisma";
-import { analyzeSentiment, generateExecutiveSummary } from "@/lib/ai";
+import { analyzeSentiment, generateExecutiveSummary, generateEmbedding } from "@/lib/ai";
 import { getNpsSummary } from "@/modules/analytics/queries";
 import type { AnalyzeResponseJob, GenerateSummaryJob, ExtractTopicsJob } from "@/server/queues";
 
@@ -51,8 +51,10 @@ async function analyzeResponse({ responseId, tenantId }: AnalyzeResponseJob) {
 
   try {
     const result = await analyzeSentiment(textAnswers);
+    const combinedText = textAnswers.join("\n\n");
+    const embedding = await generateEmbedding(combinedText);
 
-    await prisma.aIAnalysis.upsert({
+    const analysis = await prisma.aIAnalysis.upsert({
       where: { responseId },
       update: {
         sentiment: result.sentiment,
@@ -70,7 +72,15 @@ async function analyzeResponse({ responseId, tenantId }: AnalyzeResponseJob) {
       },
     });
 
-    console.log(`[worker:ai] análise concluída: response ${responseId} → ${result.sentiment}`);
+    // Salvar embedding via raw SQL pois o Prisma trata como Unsupported
+    const embeddingString = `[${embedding.join(",")}]`;
+    await prisma.$executeRawUnsafe(
+      'UPDATE "ai_analyses" SET "embedding" = $1::vector WHERE "id" = $2',
+      embeddingString,
+      analysis.id,
+    );
+
+    console.log(`[worker:ai] análise e embedding concluídos: response ${responseId} → ${result.sentiment}`);
     return result;
   } catch (err) {
     console.error(`[worker:ai] erro ao analisar response ${responseId}:`, err);

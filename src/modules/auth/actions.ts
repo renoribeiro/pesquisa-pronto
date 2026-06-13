@@ -1,5 +1,5 @@
 "use server";
-
+ 
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { env } from "@/lib/env";
@@ -8,6 +8,7 @@ import { generateToken, hashToken } from "@/lib/tokens";
 import { enqueueEmail } from "@/server/queues";
 import { audit } from "@/lib/audit";
 import { passwordResetEmail } from "@/modules/auth/emails";
+import { rateLimit } from "@/lib/rate-limit";
 
 const RESET_TTL_MINUTES = 30;
 
@@ -34,6 +35,12 @@ export async function requestPasswordReset(input: {
     message: "Se o email existir, enviaremos instruções de redefinição.",
   };
   if (!parsed.success) return genericOk;
+
+  // Rate Limit (E5)
+  const rateLimitResult = await rateLimit(`reset:${parsed.data.email}`, 3, 3600);
+  if (!rateLimitResult.allowed) {
+    return genericOk;
+  }
 
   const tenantSlug = parsed.data.tenantSlug || env.DEFAULT_TENANT_SLUG;
   const tenant = await prisma.tenant.findUnique({ where: { slug: tenantSlug } });

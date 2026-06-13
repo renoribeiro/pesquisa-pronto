@@ -520,6 +520,7 @@ model DispatchBatch {
   createdById String?
   createdBy   User?          @relation(fields: [createdById], references: [id], onDelete: SetNull)
   createdAt   DateTime       @default(now())
+  config      Json?
 
   jobs DispatchJob[]
 
@@ -619,6 +620,7 @@ model AIAnalysis {
   intensity   Int // 0-100
   emotions    Json? // ["frustração", "gratidão", ...]
   summary     String?
+  embedding   Unsupported("vector(1536)")?
   processedAt DateTime  @default(now())
 
   @@index([tenantId])

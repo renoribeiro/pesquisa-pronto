@@ -128,9 +128,9 @@ export default async function PublicSurveyPage({
 
 function SurveyGate({ message }: { message: string }) {
   return (
-    <div className="flex min-h-screen items-center justify-center p-4">
-      <div className="max-w-sm rounded-xl border bg-card p-8 text-center shadow-sm">
-        <p className="text-muted-foreground">{message}</p>
+    <div className="flex min-h-screen items-center justify-center p-4 bg-background">
+      <div className="max-w-md rounded-2xl bg-background shadow-neumorphic p-10 text-center border-0">
+        <p className="text-[#6E6565] font-semibold text-base">{message}</p>
       </div>
     </div>
   );

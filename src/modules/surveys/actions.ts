@@ -62,13 +62,19 @@ const saveSchema = z.object({
 });
 
 async function uniqueSlug(tenantId: string, base: string, excludeId?: string): Promise<string> {
-  const root = slugify(base) || "pesquisa";
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { slug: true },
+  });
+  const prefix = tenant ? `${tenant.slug}-` : "";
+  const cleanBase = base.startsWith(prefix) ? base : `${prefix}${base}`;
+  const root = slugify(cleanBase) || "pesquisa";
   let candidate = root;
   let i = 1;
-  // Loop até achar slug livre no tenant
+  // Loop até achar slug livre GLOBALMENTE
   while (true) {
     const existing = await prisma.survey.findFirst({
-      where: { tenantId, slug: candidate, ...(excludeId ? { NOT: { id: excludeId } } : {}) },
+      where: { slug: candidate, ...(excludeId ? { NOT: { id: excludeId } } : {}) },
       select: { id: true },
     });
     if (!existing) return candidate;

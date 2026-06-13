@@ -39,21 +39,26 @@ export function UserMenu({
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger render={<Button variant="ghost" className="h-9 gap-2 px-2" />}>
+      <DropdownMenuTrigger render={
+        <Button 
+          variant="ghost" 
+          className="h-10 gap-2 px-4 bg-background shadow-neumorphic hover:shadow-neumorphic-hover active:shadow-neumorphic-inset border-0 rounded-2xl transition-all duration-300 flex items-center cursor-pointer text-[#3A3333] font-semibold text-sm active:translate-y-[0.5px]" 
+        />
+      }>
         <Avatar className="h-7 w-7">
-          <AvatarFallback className="text-xs">{initials}</AvatarFallback>
+          <AvatarFallback className="text-xs bg-[#901A1E] text-white font-bold">{initials}</AvatarFallback>
         </Avatar>
-        <span className="hidden text-sm sm:inline">{name ?? email}</span>
+        <span className="hidden text-sm sm:inline text-[#3A3333] font-semibold">{name ?? email}</span>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56">
-        <DropdownMenuLabel>
-          <div className="font-medium">{name}</div>
-          <div className="text-muted-foreground text-xs">{email}</div>
-          <div className="text-muted-foreground mt-1 text-xs">{ROLE_LABELS[role] ?? role}</div>
+      <DropdownMenuContent align="end" className="w-56 bg-background shadow-neumorphic border-0 rounded-2xl p-2 mt-2">
+        <DropdownMenuLabel className="px-3 py-2">
+          <div className="font-bold text-[#3A3333]">{name}</div>
+          <div className="text-[#6E6565] text-xs mt-0.5">{email}</div>
+          <div className="text-[#901A1E] mt-1.5 text-xs font-bold uppercase tracking-wider">{ROLE_LABELS[role] ?? role}</div>
         </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => doSignOut()} className="cursor-pointer">
-          <LogOut className="mr-2 h-4 w-4" />
+        <DropdownMenuSeparator className="bg-[#a8a0a0]/20 my-1.5" />
+        <DropdownMenuItem onClick={() => doSignOut()} className="cursor-pointer flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold text-[#6E6565] hover:bg-[#901A1E]/10 hover:text-[#901A1E] transition-all duration-200">
+          <LogOut className="h-4 w-4 text-inherit" />
           Sair
         </DropdownMenuItem>
       </DropdownMenuContent>

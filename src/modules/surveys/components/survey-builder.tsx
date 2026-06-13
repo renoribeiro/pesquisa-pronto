@@ -30,6 +30,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 export interface BuilderQuestion {
   key: string;
@@ -63,6 +70,7 @@ export interface BuilderInitial {
   rules: BuilderRule[];
   sectorIds: string[];
   touchPointIds: string[];
+  themeId: string;
 }
 
 function uid() {
@@ -73,10 +81,12 @@ export function SurveyBuilder({
   initial,
   sectors,
   touchPoints,
+  themes,
 }: {
   initial: BuilderInitial;
   sectors: { id: string; name: string }[];
   touchPoints: { id: string; name: string }[];
+  themes: { id: string; name: string }[];
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -89,6 +99,7 @@ export function SurveyBuilder({
     randomize: initial.randomize,
     allowMultiple: initial.allowMultiple,
     thankYouMessage: initial.thankYouMessage,
+    themeId: initial.themeId || "",
   });
   const [questions, setQuestions] = useState<BuilderQuestion[]>(initial.questions);
   const [rules, setRules] = useState<BuilderRule[]>(initial.rules);
@@ -146,6 +157,7 @@ export function SurveyBuilder({
       try {
         await saveSurvey(initial.id, {
           ...meta,
+          themeId: meta.themeId || null,
           sectorIds,
           touchPointIds,
           questions: questions.map((q, i) => ({
@@ -281,6 +293,7 @@ export function SurveyBuilder({
             setMeta={setMeta}
             sectors={sectors}
             touchPoints={touchPoints}
+            themes={themes}
             sectorIds={sectorIds}
             setSectorIds={setSectorIds}
             touchPointIds={touchPointIds}
@@ -528,6 +541,7 @@ function SurveySettings({
   setMeta,
   sectors,
   touchPoints,
+  themes,
   sectorIds,
   setSectorIds,
   touchPointIds,
@@ -542,10 +556,12 @@ function SurveySettings({
     randomize: boolean;
     allowMultiple: boolean;
     thankYouMessage: string;
+    themeId: string;
   };
   setMeta: (m: typeof meta) => void;
   sectors: { id: string; name: string }[];
   touchPoints: { id: string; name: string }[];
+  themes: { id: string; name: string }[];
   sectorIds: string[];
   setSectorIds: (ids: string[]) => void;
   touchPointIds: string[];
@@ -570,6 +586,25 @@ function SurveySettings({
         <div className="space-y-2">
           <Label>Slug (URL pública)</Label>
           <Input value={meta.slug} onChange={(e) => setMeta({ ...meta, slug: e.target.value })} />
+        </div>
+        <div className="space-y-2">
+          <Label>Tema visual</Label>
+          <Select
+            value={meta.themeId || "default"}
+            onValueChange={(v) => setMeta({ ...meta, themeId: v === "default" || !v ? "" : v })}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Tema padrão da clínica" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="default">Padrão da clínica</SelectItem>
+              {themes.map((t) => (
+                <SelectItem key={t.id} value={t.id}>
+                  {t.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         <div className="space-y-2">
           <Label>Mensagem de agradecimento</Label>
