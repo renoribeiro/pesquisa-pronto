@@ -11,6 +11,7 @@ import {
   ChannelChart,
   RecentResponsesFeed,
 } from "@/modules/analytics/components/analytics-dashboard";
+import { TopicClustersWidget } from "@/modules/analytics/components/topic-clusters";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export const metadata = { title: "Analytics — Pronto Satisfação" };
@@ -19,12 +20,21 @@ export default async function AnalyticsPage() {
   const { ctx, db, scope } = await requirePermission("survey:view");
   const sectorWhere = responseSectorWhere(ctx, scope);
 
-  const [nps, trend, channels, recent] = await Promise.all([
+  const [nps, trend, channels, recent, topics] = await Promise.all([
     getNpsSummary(db as Parameters<typeof getNpsSummary>[0], ctx.tenantId, undefined, sectorWhere),
     getResponsesByDay(db as Parameters<typeof getResponsesByDay>[0], ctx.tenantId, 30, undefined, sectorWhere),
     getChannelBreakdown(db as Parameters<typeof getChannelBreakdown>[0], ctx.tenantId, undefined, sectorWhere),
     getRecentResponses(db as Parameters<typeof getRecentResponses>[0], ctx.tenantId, 10, undefined, sectorWhere),
+    db.topicCluster.findMany({ orderBy: { volume: "desc" } }),
   ]);
+
+  const topicViews = topics.map((t) => ({
+    id: t.id,
+    label: t.label,
+    volume: t.volume,
+    sentiment: t.sentiment as "POSITIVE" | "NEUTRAL" | "NEGATIVE",
+    trend: t.trend,
+  }));
 
   return (
     <div className="space-y-6">
@@ -46,6 +56,9 @@ export default async function AnalyticsPage() {
 
       {/* Trend chart */}
       <ResponseTrendChart data={trend} />
+
+      {/* Temas recorrentes (clustering por IA dos embeddings) */}
+      <TopicClustersWidget initialClusters={topicViews} />
 
       {/* Recent responses */}
       <RecentResponsesFeed data={recent} />

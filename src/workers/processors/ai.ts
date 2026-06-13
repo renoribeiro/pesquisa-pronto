@@ -2,6 +2,7 @@ import type { Job } from "bullmq";
 import { forTenant } from "@/lib/tenant";
 import { analyzeSentiment, generateExecutiveSummary, generateEmbedding } from "@/lib/ai";
 import { getNpsSummary } from "@/modules/analytics/queries";
+import { extractTopicClusters } from "@/modules/analytics/topics";
 import type { AnalyzeResponseJob, GenerateSummaryJob, ExtractTopicsJob } from "@/server/queues";
 
 export async function processAi(job: Job): Promise<unknown> {
@@ -155,7 +156,21 @@ async function generateSummary({ tenantId, periodStart, periodEnd }: GenerateSum
   }
 }
 
-async function extractTopics(job: ExtractTopicsJob) {
-  console.log(`[worker:ai] extract-topics para tenant ${job.tenantId} — implementação M2.3`);
-  return null;
+async function extractTopics({ tenantId, surveyId, periodStart, periodEnd }: ExtractTopicsJob) {
+  const db = forTenant(tenantId);
+  try {
+    const count = await extractTopicClusters({
+      db,
+      tenantId,
+      periodStart: new Date(periodStart),
+      periodEnd: new Date(periodEnd),
+      surveyIds: surveyId ? [surveyId] : null,
+      surveyId: surveyId ?? null,
+    });
+    console.log(`[worker:ai] extract-topics: ${count} temas para tenant ${tenantId}`);
+    return { topics: count };
+  } catch (err) {
+    console.error(`[worker:ai] erro ao extrair temas para ${tenantId}:`, err);
+    throw err;
+  }
 }

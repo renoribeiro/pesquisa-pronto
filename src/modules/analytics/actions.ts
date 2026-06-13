@@ -1,7 +1,8 @@
 "use server";
 
-import { requirePermission, responseSectorWhere } from "@/lib/session";
+import { requirePermission, responseSectorWhere, surveySectorWhere } from "@/lib/session";
 import { getNpsSummary } from "@/modules/analytics/queries";
+import { extractTopicClusters } from "@/modules/analytics/topics";
 import { generateExecutiveSummary } from "@/lib/ai";
 import { revalidatePath } from "next/cache";
 
@@ -11,6 +12,44 @@ export async function getLatestAiSummary() {
     where: { tenantId: ctx.tenantId },
     orderBy: { createdAt: "desc" },
   });
+}
+
+/** Lê os temas (clusters) atuais, ordenados por volume. */
+export async function getTopicClusters() {
+  const { db } = await requirePermission("survey:view");
+  return db.topicCluster.findMany({ orderBy: { volume: "desc" } });
+}
+
+/**
+ * Extrai temas recorrentes dos comentários dos últimos 30 dias usando os
+ * embeddings já gravados. Respeita o escopo de setor do usuário.
+ */
+export async function generateTopicClusters() {
+  const { ctx, db, scope } = await requirePermission("survey:view");
+
+  // Escopo de setor: restringe às pesquisas dos setores do usuário.
+  let surveyIds: string[] | null = null;
+  if (scope === "sector") {
+    const surveys = await db.survey.findMany({
+      where: surveySectorWhere(ctx, scope),
+      select: { id: true },
+    });
+    surveyIds = surveys.map((s) => s.id);
+  }
+
+  const periodEnd = new Date();
+  const periodStart = new Date(periodEnd.getTime() - 30 * 24 * 3600 * 1000);
+
+  await extractTopicClusters({
+    db,
+    tenantId: ctx.tenantId,
+    periodStart,
+    periodEnd,
+    surveyIds,
+  });
+
+  revalidatePath("/admin/analytics");
+  return db.topicCluster.findMany({ orderBy: { volume: "desc" } });
 }
 
 export async function generateAiSummary() {
