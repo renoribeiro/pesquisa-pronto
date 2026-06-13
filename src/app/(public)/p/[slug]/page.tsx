@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { forTenant } from "@/lib/tenant";
 import { SurveyStatus } from "@prisma/client";
 import { PublicForm } from "@/modules/responses/components/public-form";
 import { themeConfigSchema } from "@/modules/themes/theme-config";
@@ -12,8 +13,12 @@ export async function generateMetadata({
   params: Promise<{ slug: string }>;
 }): Promise<Metadata> {
   const { slug } = await params;
+  // O slug de Survey é único por tenant (@@unique([tenantId, slug])), não
+  // globalmente — daí findFirst. Ordenação estável garante resultado
+  // determinístico caso o mesmo slug exista em tenants distintos.
   const survey = await prisma.survey.findFirst({
     where: { slug },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     select: { title: true, description: true },
   });
   if (!survey) return { title: "Pesquisa não encontrada" };
@@ -27,8 +32,11 @@ export default async function PublicSurveyPage({
 }) {
   const { slug } = await params;
 
+  // O slug é único por tenant, não globalmente — findFirst com ordenação
+  // estável para resultado determinístico em caso de colisão entre tenants.
   const survey = await prisma.survey.findFirst({
     where: { slug },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     include: {
       questions: {
         orderBy: { order: "asc" },
@@ -71,7 +79,8 @@ export default async function PublicSurveyPage({
   }
 
   if (survey.responseLimit) {
-    const count = await prisma.response.count({
+    // Response tem tenantId — usa o cliente escopado ao tenant da survey.
+    const count = await forTenant(survey.tenantId).response.count({
       where: { surveyId: survey.id, completed: true },
     });
     if (count >= survey.responseLimit) {

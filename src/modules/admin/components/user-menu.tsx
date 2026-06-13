@@ -30,12 +30,15 @@ export function UserMenu({
   email?: string | null;
   role: string;
 }) {
-  const initials = (name ?? email ?? "?")
-    .split(" ")
-    .map((p) => p[0])
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
+  const initials =
+    (name ?? email ?? "?")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((p) => p[0])
+      .slice(0, 2)
+      .join("")
+      .toUpperCase() || "?";
 
   return (
     <DropdownMenu>

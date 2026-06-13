@@ -26,16 +26,25 @@ export interface SectorBreakdown {
   count: number;
 }
 
+/**
+ * Filtro de escopo de setor (relação `survey.sectors`), produzido por
+ * `responseSectorWhere(ctx, scope)` em `@/lib/session`. `{}` quando o papel
+ * tem escopo `all`; um filtro por relação quando `sector`.
+ */
+export type SectorWhere = Record<string, unknown>;
+
 export async function getNpsSummary(
   db: DbClient,
   tenantId: string,
   surveyId?: string,
+  sectorWhere: SectorWhere = {},
 ): Promise<NpsSummary> {
   const where = {
     tenantId,
     completed: true,
     npsScore: { not: null },
     ...(surveyId ? { surveyId } : {}),
+    ...sectorWhere,
   };
 
   const responses = await db.response.findMany({
@@ -64,6 +73,7 @@ export async function getResponsesByDay(
   tenantId: string,
   days = 30,
   surveyId?: string,
+  sectorWhere: SectorWhere = {},
 ): Promise<ResponsesByDay[]> {
   const since = new Date();
   since.setDate(since.getDate() - days);
@@ -74,6 +84,7 @@ export async function getResponsesByDay(
       completed: true,
       createdAt: { gte: since },
       ...(surveyId ? { surveyId } : {}),
+      ...sectorWhere,
     },
     select: { createdAt: true },
     orderBy: { createdAt: "asc" },
@@ -92,11 +103,12 @@ export async function getChannelBreakdown(
   db: DbClient,
   tenantId: string,
   surveyId?: string,
+  sectorWhere: SectorWhere = {},
 ): Promise<ChannelBreakdown[]> {
   // @ts-expect-error - Prisma union type signature overload complexity
   const grouped = await db.response.groupBy({
     by: ["channel"],
-    where: { tenantId, completed: true, ...(surveyId ? { surveyId } : {}) },
+    where: { tenantId, completed: true, ...(surveyId ? { surveyId } : {}), ...sectorWhere },
     _count: { channel: true },
   });
   return (
@@ -109,12 +121,14 @@ export async function getRecentResponses(
   tenantId: string,
   limit = 10,
   surveyId?: string,
+  sectorWhere: SectorWhere = {},
 ) {
   return db.response.findMany({
     where: {
       tenantId,
       completed: true,
       ...(surveyId ? { surveyId } : {}),
+      ...sectorWhere,
     },
     orderBy: { createdAt: "desc" },
     take: limit,
@@ -130,10 +144,16 @@ export async function getRecentResponses(
   });
 }
 
-export async function getKpiCounts(db: DbClient, tenantId: string) {
+export async function getKpiCounts(
+  db: DbClient,
+  tenantId: string,
+  sectorWhere: SectorWhere = {},
+  surveySectorWhere: SectorWhere = {},
+) {
   const [totalResponses, activeSurveys, openAlerts] = await Promise.all([
-    db.response.count({ where: { tenantId, completed: true } }),
-    db.survey.count({ where: { tenantId, status: "PUBLISHED" } }),
+    db.response.count({ where: { tenantId, completed: true, ...sectorWhere } }),
+    db.survey.count({ where: { tenantId, status: "PUBLISHED", ...surveySectorWhere } }),
+    // Alertas são tenant-wide (não há relação direta de setor); escopados por tenant.
     db.alert.count({ where: { tenantId, status: "OPEN" } }),
   ]);
   return { totalResponses, activeSurveys, openAlerts };

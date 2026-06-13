@@ -22,8 +22,19 @@ export class WhatsAppProvider implements ChannelProvider {
       return { success: false, error: "WhatsApp requer um templateName HSM aprovado." };
     }
 
+    // A ordem dos parâmetros do template é posicional ({{1}}, {{2}}, ...) e NÃO
+    // pode depender da ordem de iteração das chaves do objeto. Ordena de forma
+    // determinística pelo índice numérico da chave (fallback lexicográfico para
+    // chaves não numéricas).
     const components = variables
-      ? Object.entries(variables).map(([, text]) => ({ type: "text", text }))
+      ? Object.entries(variables)
+          .sort(([a], [b]) => {
+            const na = Number(a);
+            const nb = Number(b);
+            if (Number.isNaN(na) || Number.isNaN(nb)) return a.localeCompare(b);
+            return na - nb;
+          })
+          .map(([, text]) => ({ type: "text", text }))
       : [];
 
     const payload = {

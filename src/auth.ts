@@ -10,7 +10,10 @@ import { logger } from "@/lib/logger";
 import { resetRateLimit } from "@/lib/rate-limit";
 
 const credentialsSchema = z.object({
-  email: z.string().email(),
+  email: z
+    .string()
+    .email()
+    .transform((e) => e.trim().toLowerCase()),
   password: z.string().min(1),
   tenantSlug: z.string().optional(),
   totp: z.string().optional(),

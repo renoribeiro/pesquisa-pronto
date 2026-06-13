@@ -16,8 +16,10 @@ export default async function EmbedSurveyPage({
 }) {
   const { slug } = await params;
 
+  // slug é único por tenant (não global) — findFirst com ordenação estável.
   const survey = await prisma.survey.findFirst({
     where: { slug },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     include: {
       questions: {
         orderBy: { order: "asc" },

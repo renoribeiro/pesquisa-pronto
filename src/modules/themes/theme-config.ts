@@ -1,4 +1,10 @@
 import { z } from "zod";
+import { sanitizeCustomCss } from "@/lib/sanitize-css";
+
+/** Cor hex (#rgb, #rrggbb ou #rrggbbaa). */
+const hexColor = z
+  .string()
+  .regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/, "Cor inválida (use formato hex, ex.: #0f4c81)");
 
 /**
  * Configuração de tema (escopo §3.3). Estrutura validada e convertida em
@@ -6,12 +12,12 @@ import { z } from "zod";
  */
 export const themeConfigSchema = z.object({
   colors: z.object({
-    primary: z.string().default("#0f4c81"),
-    secondary: z.string().default("#2f80ed"),
-    pageBg: z.string().default("#f4f6f8"),
-    cardBg: z.string().default("#ffffff"),
-    text: z.string().default("#1f2937"),
-    textMuted: z.string().default("#6b7280"),
+    primary: hexColor.default("#0f4c81"),
+    secondary: hexColor.default("#2f80ed"),
+    pageBg: hexColor.default("#f4f6f8"),
+    cardBg: hexColor.default("#ffffff"),
+    text: hexColor.default("#1f2937"),
+    textMuted: hexColor.default("#6b7280"),
   }),
   typography: z.object({
     fontFamily: z.string().default("Inter"),
@@ -24,7 +30,12 @@ export const themeConfigSchema = z.object({
     spacing: z.enum(["compact", "normal", "spacious"]).default("normal"),
     maxWidth: z.number().int().min(360).max(960).default(560),
   }),
-  customCss: z.string().optional(),
+  // Sanitiza o CSS customizado no parse (remove url()/@import/expression/etc.),
+  // garantindo que valores persistidos e renderizados já estejam seguros.
+  customCss: z
+    .string()
+    .transform((v) => sanitizeCustomCss(v))
+    .optional(),
 });
 
 export type ThemeConfig = z.infer<typeof themeConfigSchema>;

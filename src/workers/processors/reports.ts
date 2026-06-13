@@ -1,6 +1,6 @@
 import type { Job } from "bullmq";
 import ExcelJS from "exceljs";
-import { prisma } from "@/lib/prisma";
+import { forTenant } from "@/lib/tenant";
 import { putObject, getObjectUrl } from "@/lib/storage";
 import type { GenerateReportJob } from "@/server/queues";
 
@@ -10,29 +10,40 @@ export async function processReport(job: Job): Promise<unknown> {
 }
 
 async function generateReport({ reportId, tenantId }: GenerateReportJob) {
-  const report = await prisma.report.findFirst({ where: { id: reportId, tenantId } });
+  const db = forTenant(tenantId);
+
+  const report = await db.report.findFirst({ where: { id: reportId } });
   if (!report) {
     console.warn(`[worker:reports] report ${reportId} não encontrado`);
     return null;
   }
 
-  await prisma.report.update({ where: { id: reportId }, data: { status: "generating" } });
+  await db.report.update({ where: { id: reportId }, data: { status: "generating" } });
+
+  // Escopo de setor: createReport (server action) grava `__sectorIds` nos
+  // filtros. `null` = acesso total (scope "all"); array = restrição aos setores
+  // do usuário (relação survey.sectors); array vazio = nenhum dado visível.
+  const filters = (report.filters ?? {}) as Record<string, unknown>;
+  const scopedSectorIds = filters.__sectorIds;
+  const sectorWhere: Record<string, unknown> = Array.isArray(scopedSectorIds)
+    ? { survey: { sectors: { some: { id: { in: scopedSectorIds as string[] } } } } }
+    : {};
 
   try {
     let fileUrl: string | null = null;
 
     if (report.format === "EXCEL" || report.format === "CSV") {
-      fileUrl = await generateExcelReport(reportId, tenantId, report.type);
+      fileUrl = await generateExcelReport(db, reportId, tenantId, report.type, sectorWhere);
     } else {
-      fileUrl = await generateTextReport(reportId, tenantId, report.type);
+      fileUrl = await generateTextReport(db, reportId, tenantId, report.type, sectorWhere);
     }
 
-    await prisma.report.update({
+    await db.report.update({
       where: { id: reportId },
       data: { status: "ready", fileUrl },
     });
 
-    await prisma.reportRun.create({
+    await db.reportRun.create({
       data: {
         tenantId,
         reportId,
@@ -43,8 +54,8 @@ async function generateReport({ reportId, tenantId }: GenerateReportJob) {
     console.log(`[worker:reports] relatório ${reportId} gerado: ${fileUrl}`);
     return { reportId, fileUrl };
   } catch (err) {
-    await prisma.report.update({ where: { id: reportId }, data: { status: "failed" } });
-    await prisma.reportRun.create({
+    await db.report.update({ where: { id: reportId }, data: { status: "failed" } });
+    await db.reportRun.create({
       data: {
         tenantId,
         reportId,
@@ -57,9 +68,11 @@ async function generateReport({ reportId, tenantId }: GenerateReportJob) {
 }
 
 async function generateExcelReport(
+  db: ReturnType<typeof forTenant>,
   reportId: string,
   tenantId: string,
   type: string,
+  sectorWhere: Record<string, unknown> = {},
 ): Promise<string> {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Pronto Satisfação";
@@ -68,8 +81,8 @@ async function generateExcelReport(
   const sheet = workbook.addWorksheet("Respostas");
 
   if (type === "RAW_DATA" || type === "RESPONSES_RAW") {
-    const responses = await prisma.response.findMany({
-      where: { tenantId, completed: true },
+    const responses = await db.response.findMany({
+      where: { completed: true, ...sectorWhere },
       orderBy: { createdAt: "desc" },
       take: 10000,
       include: {
@@ -119,8 +132,8 @@ async function generateExcelReport(
       sheet.addRow(row);
     }
   } else {
-    const responses = await prisma.response.findMany({
-      where: { tenantId, completed: true, npsScore: { not: null } },
+    const responses = await db.response.findMany({
+      where: { completed: true, npsScore: { not: null }, ...sectorWhere },
       select: { npsScore: true, createdAt: true, channel: true },
     });
 
@@ -154,11 +167,13 @@ async function generateExcelReport(
 }
 
 async function generateTextReport(
+  db: ReturnType<typeof forTenant>,
   reportId: string,
   tenantId: string,
   type: string,
+  sectorWhere: Record<string, unknown> = {},
 ): Promise<string> {
-  const count = await prisma.response.count({ where: { tenantId, completed: true } });
+  const count = await db.response.count({ where: { completed: true, ...sectorWhere } });
   const content = `RELATÓRIO ${type}\nGerado em: ${new Date().toISOString()}\nTotal de respostas: ${count}\n`;
   const key = `reports/${tenantId}/${reportId}.txt`;
   await putObject(key, Buffer.from(content, "utf-8"), "text/plain");

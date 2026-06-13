@@ -66,4 +66,33 @@ describe("Skip logic", () => {
     expect(computeVisibility(ids, rules, { q1: 9, q3: "y" }).q2).toBe(true);
     expect(computeVisibility(ids, rules, { q1: 2, q3: "y" }).q2).toBe(false);
   });
+
+  it("eq/neq casam NPS numérico contra value string do builder (regressão H3)", () => {
+    // No fluxo real a resposta NPS é number (10) e o value da condição vem do
+    // builder como string ("10"). A comparação precisa ser type-agnostic.
+    const showRule: SkipRule[] = [
+      {
+        targetQuestionId: "q2",
+        action: "SHOW",
+        join: "AND",
+        conditions: [{ questionId: "q1", operator: "eq", value: "10" }],
+      },
+    ];
+    // answer numérico 10 deve casar com "10" (antes: 10 === "10" → nunca casava)
+    expect(computeVisibility(ids, showRule, { q1: 10 }).q2).toBe(true);
+    expect(computeVisibility(ids, showRule, { q1: 9 }).q2).toBe(false);
+
+    const hideRule: SkipRule[] = [
+      {
+        targetQuestionId: "q3",
+        action: "HIDE",
+        join: "AND",
+        conditions: [{ questionId: "q1", operator: "neq", value: "0" }],
+      },
+    ];
+    // neq: answer 5 (number) é diferente de "0" → HIDE aplica (oculta)
+    expect(computeVisibility(ids, hideRule, { q1: 5 }).q3).toBe(false);
+    // neq: answer 0 (number) NÃO é diferente de "0" → não oculta
+    expect(computeVisibility(ids, hideRule, { q1: 0 }).q3).toBe(true);
+  });
 });

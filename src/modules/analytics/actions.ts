@@ -1,6 +1,6 @@
 "use server";
 
-import { requirePermission } from "@/lib/session";
+import { requirePermission, responseSectorWhere } from "@/lib/session";
 import { getNpsSummary } from "@/modules/analytics/queries";
 import { generateExecutiveSummary } from "@/lib/ai";
 import { revalidatePath } from "next/cache";
@@ -14,11 +14,12 @@ export async function getLatestAiSummary() {
 }
 
 export async function generateAiSummary() {
-  const { ctx, db } = await requirePermission("survey:view");
+  const { ctx, db, scope } = await requirePermission("survey:view");
   const tenantId = ctx.tenantId;
+  const sectorWhere = responseSectorWhere(ctx, scope);
 
-  // 1. Obter consolidados de NPS
-  const nps = await getNpsSummary(db, tenantId);
+  // 1. Obter consolidados de NPS (escopado por setor quando aplicável)
+  const nps = await getNpsSummary(db, tenantId, undefined, sectorWhere);
 
   // 2. Buscar análises de IA recentes para extrair emoções e resumos
   const analyses = await db.aIAnalysis.findMany({
@@ -75,5 +76,6 @@ export async function generateAiSummary() {
   });
 
   revalidatePath("/admin");
+  revalidatePath("/admin/analytics");
   return summary;
 }

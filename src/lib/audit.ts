@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { logger } from "@/lib/logger";
 
 /**
  * Registra uma ação administrativa no audit log.
@@ -24,7 +25,7 @@ export async function audit(params: {
       },
     });
   } catch (err) {
-    console.error("[audit] falha ao registrar:", err);
+    logger.error("[audit] falha ao registrar", { action: params.action, tenantId: params.tenantId }, err);
   }
 }
 
@@ -47,6 +48,6 @@ export async function logAccess(params: {
       },
     });
   } catch (err) {
-    console.error("[accessLog] falha ao registrar:", err);
+    logger.error("[accessLog] falha ao registrar", { tenantId: params.tenantId, success: params.success }, err);
   }
 }

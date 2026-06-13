@@ -14,13 +14,13 @@ const clinicSchema = z.object({
   contactPhone: z.string().optional(),
   address: z.string().optional(),
   timezone: z.string().default("America/Fortaleza"),
-  privacyPolicy: z.string().optional(),
-  retentionMonths: z.coerce.number().int().min(1).max(120).default(24),
 });
 
 export async function updateClinic(input: unknown) {
   const { ctx } = await requirePermission("system:configure");
   const data = clinicSchema.parse(input);
+  // Atualiza apenas os campos gerais da clínica. privacyPolicy/retentionMonths
+  // têm action dedicada (updatePrivacy) para não serem zerados a partir da aba Geral.
   await prisma.tenant.update({
     where: { id: ctx.tenantId },
     data: {
@@ -29,20 +29,62 @@ export async function updateClinic(input: unknown) {
       contactPhone: data.contactPhone || null,
       address: data.address || null,
       timezone: data.timezone,
-      privacyPolicy: data.privacyPolicy || null,
-      retentionMonths: data.retentionMonths,
     },
   });
   await audit({ tenantId: ctx.tenantId, userId: ctx.userId, action: "settings.clinic_updated" });
   revalidatePath("/admin/settings");
 }
 
+// ── Privacidade / LGPD ────────────────────────────────────────
+const privacySchema = z.object({
+  privacyPolicy: z.string().optional(),
+  retentionMonths: z.coerce.number().int().min(1).max(120).default(24),
+});
+
+/**
+ * Atualiza SOMENTE os campos de privacidade/LGPD. Não toca em
+ * name/contactEmail/contactPhone/address/timezone, evitando que a aba LGPD
+ * sobrescreva (apague) dados de contato da clínica.
+ */
+export async function updatePrivacy(input: unknown) {
+  const { ctx } = await requirePermission("system:configure");
+  const data = privacySchema.parse(input);
+  await prisma.tenant.update({
+    where: { id: ctx.tenantId },
+    data: {
+      privacyPolicy: data.privacyPolicy || null,
+      retentionMonths: data.retentionMonths,
+    },
+  });
+  await audit({ tenantId: ctx.tenantId, userId: ctx.userId, action: "settings.privacy_updated" });
+  revalidatePath("/admin/settings");
+}
+
+// Allowlist de tipos de imagem para o logo (MIME → extensão canônica).
+const LOGO_ALLOWED: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/webp": "webp",
+  "image/svg+xml": "svg",
+};
+const LOGO_ALLOWED_EXT = new Set(["png", "jpg", "jpeg", "webp", "svg"]);
+const LOGO_MAX_BYTES = 2 * 1024 * 1024; // 2 MB
+
 export async function uploadLogo(formData: FormData) {
   const { ctx } = await requirePermission("system:configure");
   const file = formData.get("logo") as File | null;
   if (!file || file.size === 0) throw new Error("Arquivo ausente");
+  if (file.size > LOGO_MAX_BYTES) throw new Error("Arquivo muito grande (máx. 2 MB).");
+
+  // Valida por allowlist de MIME E de extensão (não confia cego em file.type).
+  const contentType = LOGO_ALLOWED[file.type];
+  const rawExt = (file.name.split(".").pop() ?? "").toLowerCase();
+  if (!contentType || !LOGO_ALLOWED_EXT.has(rawExt)) {
+    throw new Error("Formato inválido. Use PNG, JPEG, WebP ou SVG.");
+  }
+
   const buffer = Buffer.from(await file.arrayBuffer());
-  const ext = file.name.split(".").pop() ?? "png";
+  const ext = contentType; // extensão canônica derivada do MIME validado
   const key = `tenants/${ctx.tenantId}/logo.${ext}`;
   await putObject(key, buffer, file.type);
   const url = publicUrl(key);

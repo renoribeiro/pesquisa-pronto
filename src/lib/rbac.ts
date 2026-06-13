@@ -12,6 +12,7 @@ export type Permission =
   | "survey:create"
   | "survey:view"
   | "survey:export"
+  | "alert:manage"
   | "system:configure"
   | "users:manage";
 
@@ -22,6 +23,7 @@ const MATRIX: Record<UserRole, Record<Permission, Scope>> = {
     "survey:create": "all",
     "survey:view": "all",
     "survey:export": "all",
+    "alert:manage": "all",
     "system:configure": "all",
     "users:manage": "all",
   },
@@ -29,6 +31,7 @@ const MATRIX: Record<UserRole, Record<Permission, Scope>> = {
     "survey:create": "all",
     "survey:view": "all",
     "survey:export": "all",
+    "alert:manage": "all",
     "system:configure": "all", // "parcial" tratado nas server actions específicas
     "users:manage": "all",
   },
@@ -36,6 +39,7 @@ const MATRIX: Record<UserRole, Record<Permission, Scope>> = {
     "survey:create": "sector",
     "survey:view": "sector",
     "survey:export": "sector",
+    "alert:manage": "sector",
     "system:configure": "none",
     "users:manage": "none",
   },
@@ -43,6 +47,7 @@ const MATRIX: Record<UserRole, Record<Permission, Scope>> = {
     "survey:create": "none",
     "survey:view": "none",
     "survey:export": "none",
+    "alert:manage": "none",
     "system:configure": "none",
     "users:manage": "none",
   },
@@ -50,6 +55,7 @@ const MATRIX: Record<UserRole, Record<Permission, Scope>> = {
     "survey:create": "none",
     "survey:view": "all", // read-only
     "survey:export": "all",
+    "alert:manage": "none", // read-only não gerencia alertas
     "system:configure": "none",
     "users:manage": "none",
   },

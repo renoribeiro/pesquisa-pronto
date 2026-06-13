@@ -51,7 +51,9 @@ export async function updateTheme(input: unknown) {
 }
 
 export async function deleteTheme(id: string) {
-  const { db } = await requirePermission("survey:create");
-  await db.theme.delete({ where: { id } });
+  const { ctx, db } = await requirePermission("survey:create");
+  const { count } = await db.theme.deleteMany({ where: { id } });
+  if (count === 0) throw new Error("Tema não encontrado.");
+  await audit({ tenantId: ctx.tenantId, userId: ctx.userId, action: "theme.delete", entityId: id });
   revalidatePath("/admin/themes");
 }

@@ -62,6 +62,7 @@ const saveSchema = z.object({
 });
 
 async function uniqueSlug(tenantId: string, base: string, excludeId?: string): Promise<string> {
+  // Tenant não é um modelo tenant-scoped: lookup via client base é intencional.
   const tenant = await prisma.tenant.findUnique({
     where: { id: tenantId },
     select: { slug: true },
@@ -71,7 +72,9 @@ async function uniqueSlug(tenantId: string, base: string, excludeId?: string): P
   const root = slugify(cleanBase) || "pesquisa";
   let candidate = root;
   let i = 1;
-  // Loop até achar slug livre GLOBALMENTE
+  // Loop até achar slug livre GLOBALMENTE.
+  // A busca de slug é cross-tenant intencional (slug público é global) — por isso
+  // usa o client base @/lib/prisma, e não o db tenant-scoped.
   while (true) {
     const existing = await prisma.survey.findFirst({
       where: { slug: candidate, ...(excludeId ? { NOT: { id: excludeId } } : {}) },
@@ -84,9 +87,9 @@ async function uniqueSlug(tenantId: string, base: string, excludeId?: string): P
 
 /** Cria uma pesquisa em rascunho e retorna o id. */
 export async function createSurvey(title: string): Promise<string> {
-  const { ctx } = await requirePermission("survey:create");
+  const { ctx, db } = await requirePermission("survey:create");
   const slug = await uniqueSlug(ctx.tenantId, title);
-  const survey = await prisma.survey.create({
+  const survey = await db.survey.create({
     data: {
       tenantId: ctx.tenantId,
       title,
@@ -108,11 +111,11 @@ export async function createSurvey(title: string): Promise<string> {
 
 /** Salva o estado completo do builder (substitui perguntas/regras). */
 export async function saveSurvey(surveyId: string, input: unknown) {
-  const { ctx } = await requirePermission("survey:create");
+  const { ctx, db } = await requirePermission("survey:create");
   const data = saveSchema.parse(input);
 
-  const survey = await prisma.survey.findFirst({
-    where: { id: surveyId, tenantId: ctx.tenantId },
+  const survey = await db.survey.findFirst({
+    where: { id: surveyId },
   });
   if (!survey) throw new Error("Pesquisa não encontrada.");
 
@@ -123,7 +126,22 @@ export async function saveSurvey(surveyId: string, input: unknown) {
 
   const passwordHash = data.password ? await hashPassword(data.password) : survey.passwordHash;
 
-  await prisma.$transaction(async (tx) => {
+  // H2: garante que os setores/pontos de contato referenciados pertencem ao tenant
+  // antes de fazer o set por id (evita vincular recursos de outro tenant).
+  if (data.sectorIds.length > 0) {
+    const count = await db.sector.count({ where: { id: { in: data.sectorIds } } });
+    if (count !== new Set(data.sectorIds).size) {
+      throw new Error("Setor inválido para este tenant.");
+    }
+  }
+  if (data.touchPointIds.length > 0) {
+    const count = await db.touchPoint.count({ where: { id: { in: data.touchPointIds } } });
+    if (count !== new Set(data.touchPointIds).size) {
+      throw new Error("Ponto de contato inválido para este tenant.");
+    }
+  }
+
+  await db.$transaction(async (tx) => {
     await tx.survey.update({
       where: { id: surveyId },
       data: {

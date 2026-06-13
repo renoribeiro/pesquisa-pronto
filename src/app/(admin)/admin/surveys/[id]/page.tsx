@@ -15,6 +15,11 @@ interface RuleCondition {
   value?: unknown;
 }
 
+/** Normaliza config (JSON) para um objeto simples; ignora arrays/null/escalares. */
+function asConfig(v: unknown): Record<string, unknown> {
+  return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+}
+
 export default async function SurveyEditPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const { db } = await requirePermission("survey:create");
@@ -42,8 +47,8 @@ export default async function SurveyEditPage({ params }: { params: Promise<{ id:
     title: q.title,
     description: q.description ?? "",
     required: q.required,
-    config: (q.config as Record<string, unknown>) ?? {},
-    options: q.options.map((o) => ({ label: o.label, value: o.value })),
+    config: asConfig(q.config),
+    options: q.options.map((o) => ({ label: o.label, value: o.value, allowOther: o.allowOther })),
   }));
 
   const rules: BuilderRule[] = survey.skipLogicRules.map((r) => {

@@ -8,16 +8,28 @@ import { env } from "@/lib/env";
  */
 let client: S3Client | null = null;
 
+/**
+ * Em desenvolvimento permitimos o endpoint local padrão do docker-compose,
+ * mas NUNCA embutimos credenciais no código — devem vir do ambiente (.env).
+ * Em produção, env.ts já exige MINIO_ENDPOINT/ACCESS_KEY/SECRET_KEY no boot.
+ */
+const DEV_ENDPOINT = "http://localhost:9000";
+
 function getClient(): S3Client {
   if (client) return client;
+  const endpoint = env.MINIO_ENDPOINT ?? DEV_ENDPOINT;
+  const accessKeyId = env.MINIO_ACCESS_KEY;
+  const secretAccessKey = env.MINIO_SECRET_KEY;
+  if (!accessKeyId || !secretAccessKey) {
+    throw new Error(
+      "Credenciais de armazenamento ausentes: defina MINIO_ACCESS_KEY e MINIO_SECRET_KEY no ambiente.",
+    );
+  }
   client = new S3Client({
-    endpoint: env.MINIO_ENDPOINT ?? "http://localhost:9000",
+    endpoint,
     region: "us-east-1",
     forcePathStyle: true, // necessário para MinIO
-    credentials: {
-      accessKeyId: env.MINIO_ACCESS_KEY ?? "minio",
-      secretAccessKey: env.MINIO_SECRET_KEY ?? "minio_dev_pw",
-    },
+    credentials: { accessKeyId, secretAccessKey },
   });
   return client;
 }
@@ -44,6 +56,6 @@ export async function getObjectUrl(key: string, expiresIn = 3600): Promise<strin
 
 /** URL pública direta (quando o bucket é público). */
 export function publicUrl(key: string): string {
-  const base = (env.MINIO_ENDPOINT ?? "http://localhost:9000").replace(/\/$/, "");
+  const base = (env.MINIO_ENDPOINT ?? DEV_ENDPOINT).replace(/\/$/, "");
   return `${base}/${BUCKET}/${key}`;
 }

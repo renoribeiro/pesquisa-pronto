@@ -45,7 +45,23 @@ export interface BuilderQuestion {
   description: string;
   required: boolean;
   config: Record<string, unknown>;
-  options: { label: string; value: string }[];
+  options: { label: string; value: string; allowOther?: boolean }[];
+}
+
+/** Deriva um value estável a partir do label, evitando colisões/vazios. */
+function deriveOptionValue(
+  label: string,
+  index: number,
+  existing: { value: string }[],
+): string {
+  const slug = label.toLowerCase().trim().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+  const base = slug || `opcao-${index + 1}`;
+  let candidate = base;
+  let n = 1;
+  while (existing.some((o, j) => j !== index && o.value === candidate)) {
+    candidate = `${base}-${++n}`;
+  }
+  return candidate;
 }
 
 export interface BuilderRule {
@@ -168,11 +184,11 @@ export function SurveyBuilder({
             required: q.required,
             order: i,
             config: q.config,
-            options: q.options.map((o, oi) => ({
+            options: q.options.map((o, oi, arr) => ({
               label: o.label,
-              value: o.value || `opt-${oi}`,
+              value: o.value || deriveOptionValue(o.label, oi, arr),
               order: oi,
-              allowOther: false,
+              allowOther: o.allowOther ?? false,
             })),
           })),
           rules,
@@ -379,8 +395,8 @@ function OptionsEditor({
   options,
   onChange,
 }: {
-  options: { label: string; value: string }[];
-  onChange: (options: { label: string; value: string }[]) => void;
+  options: { label: string; value: string; allowOther?: boolean }[];
+  onChange: (options: { label: string; value: string; allowOther?: boolean }[]) => void;
 }) {
   return (
     <div className="space-y-2 rounded-md border p-2">
@@ -390,7 +406,7 @@ function OptionsEditor({
             value={o.label}
             onChange={(e) => {
               const next = [...options];
-              next[i] = { label: e.target.value, value: e.target.value.toLowerCase().replace(/\s+/g, "-") };
+              next[i] = { ...o, label: e.target.value, value: deriveOptionValue(e.target.value, i, next) };
               onChange(next);
             }}
             placeholder={`Opção ${i + 1}`}
@@ -408,7 +424,12 @@ function OptionsEditor({
       <Button
         variant="outline"
         size="sm"
-        onClick={() => onChange([...options, { label: `Opção ${options.length + 1}`, value: `opcao-${options.length + 1}` }])}
+        onClick={() => {
+          const label = `Opção ${options.length + 1}`;
+          const next = [...options, { label, value: "" }];
+          next[next.length - 1].value = deriveOptionValue(label, next.length - 1, next);
+          onChange(next);
+        }}
       >
         <Plus className="mr-1 h-3 w-3" /> Opção
       </Button>

@@ -1,5 +1,4 @@
-import { requireSession } from "@/lib/session";
-import { forTenant } from "@/lib/tenant";
+import { requirePermission, responseSectorWhere } from "@/lib/session";
 import {
   getNpsSummary,
   getResponsesByDay,
@@ -17,14 +16,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 export const metadata = { title: "Analytics — Pronto Satisfação" };
 
 export default async function AnalyticsPage() {
-  const ctx = await requireSession();
-  const db = forTenant(ctx.tenantId);
+  const { ctx, db, scope } = await requirePermission("survey:view");
+  const sectorWhere = responseSectorWhere(ctx, scope);
 
   const [nps, trend, channels, recent] = await Promise.all([
-    getNpsSummary(db as Parameters<typeof getNpsSummary>[0], ctx.tenantId),
-    getResponsesByDay(db as Parameters<typeof getResponsesByDay>[0], ctx.tenantId, 30),
-    getChannelBreakdown(db as Parameters<typeof getChannelBreakdown>[0], ctx.tenantId),
-    getRecentResponses(db as Parameters<typeof getRecentResponses>[0], ctx.tenantId, 10),
+    getNpsSummary(db as Parameters<typeof getNpsSummary>[0], ctx.tenantId, undefined, sectorWhere),
+    getResponsesByDay(db as Parameters<typeof getResponsesByDay>[0], ctx.tenantId, 30, undefined, sectorWhere),
+    getChannelBreakdown(db as Parameters<typeof getChannelBreakdown>[0], ctx.tenantId, undefined, sectorWhere),
+    getRecentResponses(db as Parameters<typeof getRecentResponses>[0], ctx.tenantId, 10, undefined, sectorWhere),
   ]);
 
   return (

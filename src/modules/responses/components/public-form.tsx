@@ -6,8 +6,25 @@ import { QuestionRenderer, type RenderQuestion } from "@/modules/surveys/compone
 import { computeVisibility, type SkipRule } from "@/modules/surveys/logic";
 import { submitResponse, type SubmitResult } from "@/modules/responses/actions";
 import { themeToStyleString, type ThemeConfig } from "@/modules/themes/theme-config";
+import { sanitizeCustomCss } from "@/lib/sanitize-css";
 import { Button } from "@/components/ui/button";
 import { ProntoclinicaLogo } from "@/components/logo";
+
+/**
+ * Valida uma URL de redirecionamento ("obrigado"). Aceita apenas http(s)
+ * absoluto; qualquer outra coisa (javascript:, data:, esquemas relativos
+ * ambíguos, URLs inválidas) é descartada para evitar open redirect.
+ */
+function safeRedirectUrl(url: string | null): string | null {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url, typeof window !== "undefined" ? window.location.href : undefined);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    return parsed.href;
+  } catch {
+    return null;
+  }
+}
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -86,14 +103,15 @@ function ProgressBar({ value }: { value: number }) {
 // ── Thank-you screen ──────────────────────────────────────────
 
 function ThankYou({ message, redirectUrl }: { message: string | null; redirectUrl: string | null }) {
+  const safeUrl = safeRedirectUrl(redirectUrl);
   useEffect(() => {
-    if (redirectUrl) {
+    if (safeUrl) {
       const t = setTimeout(() => {
-        window.location.href = redirectUrl;
+        window.location.href = safeUrl;
       }, 3000);
       return () => clearTimeout(t);
     }
-  }, [redirectUrl]);
+  }, [safeUrl]);
 
   return (
     <div className="flex flex-col items-center gap-5 py-8 text-center" role="status">
@@ -106,7 +124,7 @@ function ThankYou({ message, redirectUrl }: { message: string | null; redirectUr
       <p className="text-[#6E6565] font-medium max-w-md">
         {message ?? "Sua resposta foi registrada com sucesso."}
       </p>
-      {redirectUrl && (
+      {safeUrl && (
         <p className="text-xs text-[#a8a0a0] font-medium">Redirecionando em alguns segundos...</p>
       )}
     </div>
@@ -203,6 +221,16 @@ export function PublicForm({ survey }: { survey: PublicSurvey }) {
 
   // Global keydown shortcuts
   useEffect(() => {
+    // Guarda um "1" recém-pressionado por um curto período para permitir
+    // formar a nota 10 (tecla "1" seguida de "0") em perguntas NPS (0–10).
+    let pendingTen: ReturnType<typeof setTimeout> | null = null;
+    const clearPendingTen = () => {
+      if (pendingTen) {
+        clearTimeout(pendingTen);
+        pendingTen = null;
+      }
+    };
+
     const handleKeyDown = (e: KeyboardEvent) => {
       // Ignore if user is typing in text inputs
       if (
@@ -245,8 +273,22 @@ export function PublicForm({ survey }: { survey: PublicSurvey }) {
           const digit = parseInt(e.key, 10);
           if (!isNaN(digit)) {
             e.preventDefault();
-            if (q.type === "NPS" && digit >= 0 && digit <= 9) {
-              setAnswer(q.id, digit);
+            if (q.type === "NPS") {
+              // NPS aceita 0–10. Como "10" tem dois dígitos, ao receber "0"
+              // logo após um "1" pendente, registra 10; caso contrário,
+              // registra o dígito (0–9) e marca "1" como possível prefixo de 10.
+              if (digit === 0 && pendingTen) {
+                clearPendingTen();
+                setAnswer(q.id, 10);
+              } else if (digit >= 0 && digit <= 9) {
+                clearPendingTen();
+                setAnswer(q.id, digit);
+                if (digit === 1) {
+                  pendingTen = setTimeout(() => {
+                    pendingTen = null;
+                  }, 1000);
+                }
+              }
             } else if (q.type === "NUMERIC_SCALE") {
               const cfg = q.config ?? {};
               const min = Number(cfg.min ?? 1);
@@ -261,7 +303,10 @@ export function PublicForm({ survey }: { survey: PublicSurvey }) {
     };
 
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      clearPendingTen();
+    };
   }, [currentPageQuestions, nextPage, setAnswer, isLastPage]);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -293,7 +338,9 @@ export function PublicForm({ survey }: { survey: PublicSurvey }) {
       tenantId: survey.tenantId,
       distributionId: survey.distributionId,
       answers: answersPayload,
-      consentGiven: consentGiven || !survey.privacyPolicy,
+      // Só registra consentimento quando há uma política de privacidade E o
+      // respondente realmente a aceitou — evita gravar consentAt falso.
+      consentGiven: Boolean(survey.privacyPolicy) && consentGiven,
       startedAt: startedAt,
       anonymous: false,
     });
@@ -475,9 +522,10 @@ function SurveyWrapper({
       {themeStyle && (
         <style>{`[data-survey-wrapper]{${themeStyle}}`}</style>
       )}
-      {customCss && (
-        <style>{customCss}</style>
-      )}
+      {customCss && (() => {
+        const safeCss = sanitizeCustomCss(customCss);
+        return safeCss ? <style>{safeCss}</style> : null;
+      })()}
       <style>{`
         @keyframes slideUp {
           from {

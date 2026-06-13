@@ -5,13 +5,20 @@ import { getWhatsAppProvider } from "@/lib/channels/whatsapp";
 import { getSmsProvider } from "@/lib/channels/sms";
 import { enqueueEmail } from "@/server/queues";
 import type { DispatchJobPayload } from "@/server/queues";
+import { escapeHtml, safeHref } from "@/lib/html";
 
 export async function processDispatch(job: Job): Promise<unknown> {
   if (job.name !== "send") return null;
-  return sendDispatchJob(job.data as DispatchJobPayload);
+  return sendDispatchJob(job.data as DispatchJobPayload, job);
 }
 
-async function sendDispatchJob({ dispatchJobId, tenantId }: DispatchJobPayload) {
+/** Subconjunto mínimo de Job que precisamos para decidir tentativa final. */
+type JobAttemptInfo = { attemptsMade: number; opts: { attempts?: number } };
+
+async function sendDispatchJob(
+  { dispatchJobId, tenantId }: DispatchJobPayload,
+  job: JobAttemptInfo,
+) {
   const dispatchJob = await prisma.dispatchJob.findFirst({
     where: { id: dispatchJobId, tenantId },
     include: {
@@ -25,7 +32,11 @@ async function sendDispatchJob({ dispatchJobId, tenantId }: DispatchJobPayload) 
     return null;
   }
 
-  if (dispatchJob.status !== "PENDING") {
+  // Permite reprocessar jobs que ficaram em estados não-terminais (PENDING),
+  // que estavam em voo (SENDING — provável crash/retry) ou que falharam (FAILED).
+  // Jobs já SENT/terminais não são reprocessados (idempotência).
+  const RETRIABLE_STATUSES = ["PENDING", "SENDING", "FAILED"] as const;
+  if (!RETRIABLE_STATUSES.includes(dispatchJob.status as (typeof RETRIABLE_STATUSES)[number])) {
     console.log(`[worker:dispatch] job ${dispatchJobId} já processado: ${dispatchJob.status}`);
     return null;
   }
@@ -103,33 +114,51 @@ async function sendDispatchJob({ dispatchJobId, tenantId }: DispatchJobPayload) 
     return { success: true };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
-    await prisma.dispatchJob.update({
-      where: { id: dispatchJobId },
-      data: { status: "FAILED", error },
-    });
-    await prisma.dispatchBatch.update({
-      where: { id: dispatchJob.batchId },
-      data: { failed: { increment: 1 } },
-    });
+    const maxAttempts = job.opts.attempts ?? 1;
+    const isFinalAttempt = job.attemptsMade + 1 >= maxAttempts;
+
+    if (isFinalAttempt) {
+      // Última tentativa: marca como FAILED e contabiliza no lote uma única vez.
+      await prisma.dispatchJob.update({
+        where: { id: dispatchJobId },
+        data: { status: "FAILED", error },
+      });
+      await prisma.dispatchBatch.update({
+        where: { id: dispatchJob.batchId },
+        data: { failed: { increment: 1 } },
+      });
+    } else {
+      // Tentativas intermediárias: deixa PENDING para reprocessar; registra o
+      // último erro mas NÃO incrementa batch.failed (evita contagem inflada).
+      await prisma.dispatchJob.update({
+        where: { id: dispatchJobId },
+        data: { status: "PENDING", error },
+      });
+    }
     throw err;
   }
 }
 
 function buildEmailHtml(title: string, name: string | undefined, url: string): string {
-  const greeting = name ? `Olá <strong>${name}</strong>,` : "Olá,";
+  // Dados controlados pelo usuário (title/name) e a URL precisam ser escapados
+  // para evitar injeção de HTML / phishing no corpo do e-mail.
+  const safeTitle = escapeHtml(title);
+  const greeting = name ? `Olá <strong>${escapeHtml(name)}</strong>,` : "Olá,";
+  const href = safeHref(url);
+  const safeUrlText = escapeHtml(url);
   return `<!DOCTYPE html>
 <html lang="pt-BR">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
 <body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;color:#333">
-  <h2 style="color:#1a1a2e">${title}</h2>
+  <h2 style="color:#1a1a2e">${safeTitle}</h2>
   <p>${greeting}</p>
   <p>Convidamos você a responder nossa pesquisa de satisfação. Leva apenas alguns minutos.</p>
   <p style="margin:32px 0">
-    <a href="${url}" style="background:#6366f1;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:bold">
+    <a href="${href}" style="background:#6366f1;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:bold">
       Responder pesquisa
     </a>
   </p>
-  <p style="font-size:12px;color:#666">Ou acesse: <a href="${url}">${url}</a></p>
+  <p style="font-size:12px;color:#666">Ou acesse: <a href="${href}">${safeUrlText}</a></p>
 </body>
 </html>`;
 }

@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import {
   updateClinic,
+  updatePrivacy,
   createSector,
   toggleSector,
   createTouchPoint,
@@ -52,6 +53,20 @@ export function SettingsClient({
     start(async () => {
       try {
         await updateClinic(payload);
+        toast.success("Configurações salvas.");
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Erro ao salvar.");
+      }
+    });
+  }
+
+  function onPrivacySubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+    const payload = Object.fromEntries(fd.entries());
+    start(async () => {
+      try {
+        await updatePrivacy(payload);
         toast.success("Configurações salvas.");
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Erro ao salvar.");
@@ -139,9 +154,7 @@ export function SettingsClient({
             <CardTitle>Privacidade e LGPD</CardTitle>
           </CardHeader>
           <CardContent>
-            <form onSubmit={onClinicSubmit} className="space-y-4">
-              <input type="hidden" name="name" value={clinic.name} />
-              <input type="hidden" name="timezone" value={clinic.timezone} />
+            <form onSubmit={onPrivacySubmit} className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="retentionMonths">Retenção de dados (meses)</Label>
                 <Input

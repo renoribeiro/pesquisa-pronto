@@ -88,7 +88,7 @@ export function DistributionPanel({ surveyId, surveySlug }: DistributionPanelPro
       </TabsContent>
 
       <TabsContent value="email">
-        <EmailDispatchForm surveyId={surveyId} baseUrl={baseUrl} />
+        <EmailDispatchForm surveyId={surveyId} />
       </TabsContent>
     </Tabs>
   );
@@ -120,7 +120,12 @@ function QrCodeDisplay({ url }: { url: string }) {
   );
 }
 
-function EmailDispatchForm({ surveyId, baseUrl }: { surveyId: string; baseUrl: string }) {
+/** Validação leve de e-mail no cliente (espelha z.string().email() do servidor). */
+function isValidEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function EmailDispatchForm({ surveyId }: { surveyId: string }) {
   const [subject, setSubject] = useState("Pesquisa de satisfação — Prontoclínica");
   const [recipientsText, setRecipientsText] = useState("");
   const [pending, start] = useTransition();
@@ -128,14 +133,41 @@ function EmailDispatchForm({ surveyId, baseUrl }: { surveyId: string; baseUrl: s
   async function submit(e: React.FormEvent) {
     e.preventDefault();
 
-    const lines = recipientsText.split("\n").filter((l) => l.trim());
-    const recipients = lines.map((l) => {
-      const [name, email] = l.split(",").map((s) => s.trim());
-      return email ? { name, email } : { email: name };
-    });
+    const lines = recipientsText.split("\n").map((l) => l.trim()).filter(Boolean);
+    const recipients: { name?: string; email: string }[] = [];
+    const invalid: string[] = [];
+
+    for (const line of lines) {
+      // Formato esperado: "Nome, email" ou apenas "email".
+      const parts = line.split(",").map((s) => s.trim());
+      let name: string | undefined;
+      let email: string;
+      if (parts.length >= 2) {
+        // Há vírgula: a última parte é o e-mail; o restante compõe o nome.
+        email = parts[parts.length - 1];
+        name = parts.slice(0, -1).join(", ").trim() || undefined;
+      } else {
+        // Sem vírgula: a linha inteira deve ser um e-mail (não há nome).
+        email = parts[0];
+      }
+
+      if (!isValidEmail(email)) {
+        invalid.push(line);
+        continue;
+      }
+      recipients.push({ name, email });
+    }
+
+    if (invalid.length > 0) {
+      toast.error(
+        `${invalid.length} linha(s) sem e-mail válido foram ignoradas: ${invalid
+          .slice(0, 3)
+          .join("; ")}${invalid.length > 3 ? "…" : ""}`,
+      );
+    }
 
     if (recipients.length === 0) {
-      toast.error("Adicione pelo menos um destinatário.");
+      toast.error("Adicione pelo menos um destinatário com e-mail válido.");
       return;
     }
 
@@ -145,9 +177,8 @@ function EmailDispatchForm({ surveyId, baseUrl }: { surveyId: string; baseUrl: s
           surveyId,
           subject,
           recipients,
-          baseUrl,
         });
-        toast.success(`${result.sent} email(s) enviado(s) com sucesso.`);
+        toast.success(`${result.sent} email(s) enfileirado(s) para envio.`);
         setRecipientsText("");
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Erro ao enviar emails.");

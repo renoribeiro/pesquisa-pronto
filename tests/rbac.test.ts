@@ -39,4 +39,18 @@ describe("RBAC — matriz de permissões (escopo §3.1.2)", () => {
     expect(() => assertCan("OPERATOR", "survey:create")).toThrow();
     expect(() => assertCan("CLINIC_ADMIN", "survey:create")).not.toThrow();
   });
+
+  it("alert:manage é negado a VIEWER e OPERATOR (read-only não gerencia alertas)", () => {
+    // Regressão H5: acknowledgeAlert exige alert:manage, não survey:view.
+    expect(can("VIEWER", "alert:manage")).toBe(false);
+    expect(can("OPERATOR", "alert:manage")).toBe(false);
+    // Mas VIEWER continua podendo ver (listar) alertas.
+    expect(can("VIEWER", "survey:view")).toBe(true);
+  });
+
+  it("alert:manage é concedido a admins e gestor de setor", () => {
+    expect(can("SUPER_ADMIN", "alert:manage")).toBe(true);
+    expect(can("CLINIC_ADMIN", "alert:manage")).toBe(true);
+    expect(scopeOf("SECTOR_MANAGER", "alert:manage")).toBe("sector");
+  });
 });

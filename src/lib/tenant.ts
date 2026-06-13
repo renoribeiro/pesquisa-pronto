@@ -14,39 +14,14 @@ import { prisma } from "@/lib/prisma";
  * usado para operações de sistema/cross-tenant conscientes.
  */
 
-// Modelos que possuem a coluna `tenantId`. Mantenha em sincronia com o schema.
-const TENANT_MODELS = new Set<string>([
-  "ChannelConfig",
-  "User",
-  "PasswordReset",
-  "Sector",
-  "TouchPoint",
-  "AuditLog",
-  "AccessLog",
-  "Survey",
-  "Question",
-  "QuestionOption",
-  "SkipLogicRule",
-  "Theme",
-  "Distribution",
-  "Recipient",
-  "DispatchBatch",
-  "DispatchJob",
-  "Response",
-  "Answer",
-  "AIAnalysis",
-  "TopicCluster",
-  "ExecutiveSummary",
-  "Alert",
-  "AlertThreshold",
-  "Report",
-  "ReportSchedule",
-  "ReportRun",
-  "Notification",
-  "ApiKey",
-  "WebhookEndpoint",
-  "WebhookLog",
-]);
+// Modelos que possuem a coluna `tenantId`, derivados automaticamente do schema
+// via DMMF do Prisma. Isso garante paridade permanente com o schema: qualquer
+// novo modelo com `tenantId` passa a ser escopado pelo guard sem edição manual.
+const TENANT_MODELS = new Set<string>(
+  Prisma.dmmf.datamodel.models
+    .filter((m) => m.fields.some((f) => f.name === "tenantId"))
+    .map((m) => m.name),
+);
 
 // Operações cujo `args.where` deve ser escopado por tenant.
 const WHERE_OPS = new Set<string>([

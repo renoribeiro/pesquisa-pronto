@@ -7,6 +7,11 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 
+/** Normaliza um valor de config para array de strings (tolera config malformada). */
+function asStringArray(v: unknown): string[] {
+  return Array.isArray(v) ? v.map((x) => String(x)) : [];
+}
+
 export interface RenderQuestion {
   id: string;
   type: QuestionType;
@@ -67,8 +72,10 @@ function QuestionInput({
     case "STAR_RATING":
     case "STAR_RATING_TEXT":
       return <StarsInput max={Number(cfg.max ?? 5)} value={value} onChange={onChange} disabled={disabled} withText={q.type === "STAR_RATING_TEXT"} title={q.title} />;
-    case "EMOJI":
-      return <EmojiInput set={(cfg.set as string[]) ?? ["😞", "😐", "🙂", "😊", "😁"]} value={value} onChange={onChange} disabled={disabled} title={q.title} />;
+    case "EMOJI": {
+      const set = asStringArray(cfg.set);
+      return <EmojiInput set={set.length ? set : ["😞", "😐", "🙂", "😊", "😁"]} value={value} onChange={onChange} disabled={disabled} title={q.title} />;
+    }
     case "MULTIPLE_CHOICE":
       return <RadioInput options={q.options} value={value} onChange={onChange} disabled={disabled} title={q.title} />;
     case "DROPDOWN":
@@ -94,7 +101,7 @@ function QuestionInput({
     case "RANKING":
       return <RankingInput options={q.options} value={value} onChange={onChange} disabled={disabled} />;
     case "MATRIX":
-      return <MatrixInput rows={(cfg.rows as string[]) ?? []} columns={(cfg.columns as string[]) ?? []} value={value} onChange={onChange} disabled={disabled} />;
+      return <MatrixInput rows={asStringArray(cfg.rows)} columns={asStringArray(cfg.columns)} value={value} onChange={onChange} disabled={disabled} />;
     case "DATETIME":
       return (
         <Input
@@ -363,28 +370,31 @@ function RankingInput({ options, value, onChange, disabled }: { options: RenderQ
 }
 
 function MatrixInput({ rows, columns, value, onChange, disabled }: { rows: string[]; columns: string[]; value: unknown; onChange: (v: unknown) => void; disabled?: boolean }) {
-  const answers = (value as Record<string, string>) ?? {};
+  const answers =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, string>)
+      : {};
   return (
     <div className="overflow-x-auto shadow-neumorphic-inset bg-background p-4 rounded-3xl border-0">
       <table className="w-full text-sm">
         <thead>
           <tr>
             <th />
-            {columns.map((c) => (
-              <th key={c} className="px-3 py-2 text-center text-xs font-bold text-[#6E6565]">{c}</th>
+            {columns.map((c, ci) => (
+              <th key={ci} className="px-3 py-2 text-center text-xs font-bold text-[#6E6565]">{c}</th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => (
-            <tr key={r} className="border-b border-[#a8a0a0]/10 last:border-0">
+          {rows.map((r, ri) => (
+            <tr key={ri} className="border-b border-[#a8a0a0]/10 last:border-0">
               <td className="py-3 pr-4 text-sm font-semibold text-[#3A3333]">{r}</td>
-              {columns.map((c) => (
-                <td key={c} className="text-center py-3">
-                  <input 
-                    type="radio" 
-                    name={`m-${r}`} 
-                    checked={answers[r] === c} 
+              {columns.map((c, ci) => (
+                <td key={ci} className="text-center py-3">
+                  <input
+                    type="radio"
+                    name={`m-${ri}`}
+                    checked={answers[r] === c}
                     disabled={disabled} 
                     onChange={() => onChange({ ...answers, [r]: c })} 
                     aria-label={`Linha ${r}, coluna ${c}`}

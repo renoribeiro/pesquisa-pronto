@@ -35,7 +35,10 @@ const emailDispatchSchema = z.object({
       email: z.string().email(),
     }),
   ).min(1),
-  baseUrl: z.string().url(),
+  // baseUrl não é usado pelo servidor (a URL pública é derivada de env.APP_URL no
+  // worker). Aceito como opcional por compatibilidade com clientes que ainda o
+  // enviam, mas é ignorado.
+  baseUrl: z.string().url().optional(),
 });
 
 export async function dispatchSurveyByEmail(input: unknown) {
@@ -58,52 +61,81 @@ export async function dispatchSurveyByEmail(input: unknown) {
     });
   }
 
+  // Deduplica destinatários por (survey, email) — o mesmo e-mail informado mais
+  // de uma vez deve gerar um único disparo. Mantém a primeira ocorrência (e seu
+  // nome). Normaliza o e-mail por lowercase para a chave de deduplicação.
+  const uniqueRecipients = new Map<string, { name?: string; email: string }>();
+  for (const r of data.recipients) {
+    const key = r.email.trim().toLowerCase();
+    if (!uniqueRecipients.has(key)) {
+      uniqueRecipients.set(key, { name: r.name, email: r.email.trim() });
+    }
+  }
+  const recipients = [...uniqueRecipients.values()];
+
   // Create dispatch batch
   const batch = await db.dispatchBatch.create({
     data: {
       tenantId: ctx.tenantId,
       surveyId: data.surveyId,
       channel: ChannelType.EMAIL,
-      total: data.recipients.length,
+      total: recipients.length,
       config: { subject: data.subject },
       createdById: ctx.userId,
     },
   });
 
-  // Create recipients, jobs, and enqueue
-  for (const r of data.recipients) {
-    const token = generateToken();
-    const recipient = await db.recipient.create({
-      data: {
+  // Create recipients, jobs, and enqueue. Isola erro por destinatário: um
+  // endereço inválido/falha de enfileiramento não deve abortar o lote inteiro.
+  let enqueued = 0;
+  const failures: { email: string; error: string }[] = [];
+
+  for (const r of recipients) {
+    try {
+      const token = generateToken();
+      const recipient = await db.recipient.create({
+        data: {
+          tenantId: ctx.tenantId,
+          surveyId: data.surveyId,
+          name: r.name ?? null,
+          email: r.email,
+          token,
+        },
+      });
+
+      const job = await db.dispatchJob.create({
+        data: {
+          tenantId: ctx.tenantId,
+          batchId: batch.id,
+          recipientId: recipient.id,
+          channel: ChannelType.EMAIL,
+          status: "PENDING",
+        },
+      });
+
+      await enqueueDispatch({
+        dispatchJobId: job.id,
         tenantId: ctx.tenantId,
-        surveyId: data.surveyId,
-        name: r.name ?? null,
+      });
+      enqueued += 1;
+    } catch (err) {
+      failures.push({
         email: r.email,
-        token,
-      },
-    });
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
 
-    const job = await db.dispatchJob.create({
-      data: {
-        tenantId: ctx.tenantId,
-        batchId: batch.id,
-        recipientId: recipient.id,
-        channel: ChannelType.EMAIL,
-        status: "PENDING",
-      },
-    });
-
-    await enqueueDispatch({
-      dispatchJobId: job.id,
-      tenantId: ctx.tenantId,
+  // Contabiliza apenas os jobs efetivamente enfileirados (não a contagem bruta
+  // de entrada). O envio real é confirmado pelo worker; aqui refletimos o que
+  // entrou na fila de disparo.
+  if (enqueued > 0) {
+    await db.distribution.update({
+      where: { id: dist.id },
+      data: { sentCount: { increment: enqueued } },
     });
   }
 
-  await db.distribution.update({
-    where: { id: dist.id },
-    data: { sentCount: { increment: data.recipients.length } },
-  });
-
   revalidatePath(`/admin/surveys/${data.surveyId}`);
-  return { sent: data.recipients.length };
+  return { sent: enqueued, total: recipients.length, failures };
 }

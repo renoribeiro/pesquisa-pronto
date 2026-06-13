@@ -1,5 +1,5 @@
 import type { Job } from "bullmq";
-import { prisma } from "@/lib/prisma";
+import { forTenant } from "@/lib/tenant";
 import { analyzeSentiment, generateExecutiveSummary, generateEmbedding } from "@/lib/ai";
 import { getNpsSummary } from "@/modules/analytics/queries";
 import type { AnalyzeResponseJob, GenerateSummaryJob, ExtractTopicsJob } from "@/server/queues";
@@ -19,9 +19,11 @@ export async function processAi(job: Job): Promise<unknown> {
 }
 
 async function analyzeResponse({ responseId, tenantId }: AnalyzeResponseJob) {
+  const db = forTenant(tenantId);
+
   // Load response + text answers
-  const response = await prisma.response.findFirst({
-    where: { id: responseId, tenantId },
+  const response = await db.response.findFirst({
+    where: { id: responseId },
     include: {
       answers: {
         include: { question: { select: { type: true } } },
@@ -54,7 +56,7 @@ async function analyzeResponse({ responseId, tenantId }: AnalyzeResponseJob) {
     const combinedText = textAnswers.join("\n\n");
     const embedding = await generateEmbedding(combinedText);
 
-    const analysis = await prisma.aIAnalysis.upsert({
+    const analysis = await db.aIAnalysis.upsert({
       where: { responseId },
       update: {
         sentiment: result.sentiment,
@@ -72,12 +74,14 @@ async function analyzeResponse({ responseId, tenantId }: AnalyzeResponseJob) {
       },
     });
 
-    // Salvar embedding via raw SQL pois o Prisma trata como Unsupported
+    // Salvar embedding via raw SQL pois o Prisma trata como Unsupported.
+    // Escopar por tenantId para reforçar o isolamento multitenant.
     const embeddingString = `[${embedding.join(",")}]`;
-    await prisma.$executeRawUnsafe(
-      'UPDATE "ai_analyses" SET "embedding" = $1::vector WHERE "id" = $2',
+    await db.$executeRawUnsafe(
+      'UPDATE "ai_analyses" SET "embedding" = $1::vector WHERE "id" = $2 AND "tenantId" = $3',
       embeddingString,
       analysis.id,
+      tenantId,
     );
 
     console.log(`[worker:ai] análise e embedding concluídos: response ${responseId} → ${result.sentiment}`);
@@ -89,12 +93,13 @@ async function analyzeResponse({ responseId, tenantId }: AnalyzeResponseJob) {
 }
 
 async function generateSummary({ tenantId, periodStart, periodEnd }: GenerateSummaryJob) {
-  try {
-    const nps = await getNpsSummary(prisma, tenantId);
+  const db = forTenant(tenantId);
 
-    const analyses = await prisma.aIAnalysis.findMany({
+  try {
+    const nps = await getNpsSummary(db, tenantId);
+
+    const analyses = await db.aIAnalysis.findMany({
       where: {
-        tenantId,
         processedAt: { gte: new Date(periodStart), lte: new Date(periodEnd) },
       },
       select: { emotions: true, summary: true },
@@ -116,8 +121,8 @@ async function generateSummary({ tenantId, periodStart, periodEnd }: GenerateSum
       .slice(0, 5)
       .map((a) => a.summary as string);
 
-    const surveys = await prisma.survey.findMany({
-      where: { tenantId, status: "PUBLISHED" },
+    const surveys = await db.survey.findMany({
+      where: { status: "PUBLISHED" },
       select: { title: true },
       take: 1,
     });
@@ -131,7 +136,7 @@ async function generateSummary({ tenantId, periodStart, periodEnd }: GenerateSum
       recentComments,
     );
 
-    await prisma.executiveSummary.create({
+    await db.executiveSummary.create({
       data: {
         tenantId,
         periodStart: new Date(periodStart),

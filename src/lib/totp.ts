@@ -4,6 +4,11 @@ import QRCode from "qrcode";
 /**
  * 2FA via TOTP (compatível com Google Authenticator / Authy).
  * API do otplib v13 (funcional).
+ *
+ * TODO(segurança): cifrar `totpSecret` em repouso no banco (ex.: AES-GCM com
+ * chave derivada de AUTH_SECRET, ou KMS), em vez de armazenar o segredo em texto
+ * plano. A cifragem deve ser introduzida junto de uma migração de dados para os
+ * segredos existentes, para não quebrar a verificação dos usuários já cadastrados.
  */
 const ISSUER = "Pronto Satisfação";
 

@@ -1,4 +1,4 @@
-import { requirePermission } from "@/lib/session";
+import { requirePermission, responseSectorWhere, surveySectorWhere } from "@/lib/session";
 import { Badge } from "@/components/ui/badge";
 
 export const metadata = { title: "Respostas — Pronto Satisfação" };
@@ -22,11 +22,14 @@ export default async function ResponsesPage({
   const pageSize = 20;
   const skip = (page - 1) * pageSize;
 
-  const { db } = await requirePermission("survey:view");
+  const { ctx, db, scope } = await requirePermission("survey:view");
+  const respSector = responseSectorWhere(ctx, scope);
+  const surveySector = surveySectorWhere(ctx, scope);
+  const responseWhere = { completed: true, ...(sp.survey ? { surveyId: sp.survey } : {}), ...respSector };
 
   const [responses, total, surveys] = await Promise.all([
     db.response.findMany({
-      where: { completed: true, ...(sp.survey ? { surveyId: sp.survey } : {}) },
+      where: responseWhere,
       orderBy: { createdAt: "desc" },
       skip,
       take: pageSize,
@@ -35,10 +38,12 @@ export default async function ResponsesPage({
         aiAnalysis: { select: { sentiment: true } },
       },
     }),
-    db.response.count({
-      where: { completed: true, ...(sp.survey ? { surveyId: sp.survey } : {}) },
+    db.response.count({ where: responseWhere }),
+    db.survey.findMany({
+      where: surveySector,
+      select: { id: true, title: true },
+      orderBy: { title: "asc" },
     }),
-    db.survey.findMany({ select: { id: true, title: true }, orderBy: { title: "asc" } }),
   ]);
 
   const totalPages = Math.ceil(total / pageSize);

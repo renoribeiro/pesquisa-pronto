@@ -4,48 +4,65 @@ import { revalidatePath } from "next/cache";
 import { AlertType } from "@prisma/client";
 import { requirePermission } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { forTenant, type TenantClient } from "@/lib/tenant";
 import { getWhatsAppProvider } from "@/lib/channels/whatsapp";
 
-async function notifyWhatsAppAlert(tenantId: string, npsScore: number, surveyId: string) {
+/** Normaliza um telefone para apenas dígitos; retorna null se inválido. */
+function normalizePhone(raw: string): string | null {
+  const digits = raw.replace(/\D/g, "");
+  // Exige um número minimamente plausível (DDD + número).
+  return digits.length >= 10 ? digits : null;
+}
+
+async function notifyWhatsAppAlert(
+  db: TenantClient,
+  tenantId: string,
+  npsScore: number,
+  surveyId: string,
+) {
   try {
     // 1. Obter a configuração do threshold para ver se há telefones configurados
-    const threshold = await prisma.alertThreshold.findUnique({
+    const threshold = await db.alertThreshold.findUnique({
       where: { tenantId_type: { tenantId, type: AlertType.DETRACTOR } },
     });
 
-    let phones: string[] = [];
+    const rawPhones: string[] = [];
     if (threshold?.config) {
       const cfg = threshold.config as Record<string, unknown>;
       if (typeof cfg.notificationPhones === "string" && cfg.notificationPhones.trim()) {
-        phones = cfg.notificationPhones.split(",").map((p) => p.trim());
+        rawPhones.push(...cfg.notificationPhones.split(","));
       } else if (Array.isArray(cfg.notificationPhones)) {
-        phones = cfg.notificationPhones.map((p) => String(p).trim());
+        rawPhones.push(...cfg.notificationPhones.map((p) => String(p)));
       }
     }
 
-    // 2. Fallback para o telefone de contato do tenant
-    if (phones.length === 0) {
+    // 2. Fallback para o telefone de contato do tenant.
+    //    Tenant não possui coluna `tenantId` (é o próprio tenant) → client base.
+    if (rawPhones.length === 0) {
       const tenant = await prisma.tenant.findUnique({
         where: { id: tenantId },
         select: { contactPhone: true },
       });
       if (tenant?.contactPhone) {
-        phones.push(tenant.contactPhone);
+        rawPhones.push(tenant.contactPhone);
       }
     }
+
+    // 3. Validar e deduplicar telefones (apenas dígitos, sem repetições).
+    const phones = [...new Set(rawPhones.map(normalizePhone).filter((p): p is string => p !== null))];
 
     if (phones.length === 0) {
       console.log(`[alerts:whatsapp] Nenhum telefone cadastrado para o tenant ${tenantId}`);
       return;
     }
 
-    // 3. Obter dados da pesquisa
-    const survey = await prisma.survey.findUnique({
+    // 4. Obter dados da pesquisa (escopado por tenant via guard)
+    const survey = await db.survey.findUnique({
       where: { id: surveyId },
       select: { title: true },
     });
 
-    // 4. Enviar mensagem de WhatsApp via provider para cada telefone
+    // 5. Enviar mensagem de WhatsApp via provider para cada telefone
     const provider = getWhatsAppProvider();
     for (const phone of phones) {
       const res = await provider.send({
@@ -69,8 +86,10 @@ async function notifyWhatsAppAlert(tenantId: string, npsScore: number, surveyId:
 
 /** Check and create alerts after a new response is submitted. */
 export async function checkAlerts(tenantId: string, surveyId: string, npsScore: number | null) {
-  const thresholds = await prisma.alertThreshold.findMany({
-    where: { tenantId, active: true },
+  const db = forTenant(tenantId);
+
+  const thresholds = await db.alertThreshold.findMany({
+    where: { active: true },
   });
 
   for (const threshold of thresholds) {
@@ -79,7 +98,7 @@ export async function checkAlerts(tenantId: string, surveyId: string, npsScore: 
     if (threshold.type === AlertType.DETRACTOR && npsScore !== null) {
       const limit = Number(cfg.below ?? 7);
       if (npsScore < limit) {
-        await createAlertIfNotExists(tenantId, {
+        await createAlertIfNotExists(db, tenantId, {
           type: AlertType.DETRACTOR,
           title: `Detrator detectado: NPS ${npsScore}`,
           message: `Uma resposta com NPS ${npsScore} foi registrada, indicando um detrator (abaixo de ${limit}).`,
@@ -87,7 +106,7 @@ export async function checkAlerts(tenantId: string, surveyId: string, npsScore: 
         });
 
         // Dispara notificação no WhatsApp (Close-Loop)
-        await notifyWhatsAppAlert(tenantId, npsScore, surveyId);
+        await notifyWhatsAppAlert(db, tenantId, npsScore, surveyId);
       }
     }
 
@@ -98,13 +117,13 @@ export async function checkAlerts(tenantId: string, surveyId: string, npsScore: 
 }
 
 async function createAlertIfNotExists(
+  db: TenantClient,
   tenantId: string,
   data: { type: AlertType; title: string; message: string; surveyId?: string },
 ) {
   const since = new Date(Date.now() - 24 * 3600 * 1000);
-  const existing = await prisma.alert.findFirst({
+  const existing = await db.alert.findFirst({
     where: {
-      tenantId,
       type: data.type,
       status: "OPEN",
       surveyId: data.surveyId ?? null,
@@ -113,13 +132,15 @@ async function createAlertIfNotExists(
   });
   if (existing) return;
 
-  await prisma.alert.create({
-    data: { tenantId, ...data },
+  // tenantId explícito para satisfazer os tipos do Prisma (o guard forTenant
+  // também o injeta em runtime — valor idêntico, redundância segura).
+  await db.alert.create({
+    data: { ...data, tenantId },
   });
 }
 
 export async function acknowledgeAlert(alertId: string) {
-  const { db } = await requirePermission("survey:view");
+  const { db } = await requirePermission("alert:manage");
   await db.alert.update({
     where: { id: alertId },
     data: { status: "ACKNOWLEDGED", acknowledgedAt: new Date() },

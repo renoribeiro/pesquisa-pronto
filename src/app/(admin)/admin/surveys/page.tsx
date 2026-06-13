@@ -1,6 +1,5 @@
 import Link from "next/link";
-import { requireSession } from "@/lib/session";
-import { forTenant } from "@/lib/tenant";
+import { requirePermission, surveySectorWhere } from "@/lib/session";
 import { can } from "@/lib/rbac";
 import { NewSurveyButton } from "@/modules/surveys/components/new-survey-button";
 import { Badge } from "@/components/ui/badge";
@@ -17,9 +16,9 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 export default async function SurveysPage() {
-  const ctx = await requireSession();
-  const db = forTenant(ctx.tenantId);
+  const { ctx, db, scope } = await requirePermission("survey:view");
   const surveys = await db.survey.findMany({
+    where: surveySectorWhere(ctx, scope),
     orderBy: { updatedAt: "desc" },
     include: { _count: { select: { responses: true, questions: true } } },
   });

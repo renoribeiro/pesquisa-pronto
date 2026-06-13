@@ -1,4 +1,5 @@
-import { requireTenantDb } from "@/lib/session";
+import { requireTenantDb, responseSectorWhere, surveySectorWhere } from "@/lib/session";
+import { scopeOf } from "@/lib/rbac";
 import { ExecutiveInsightsWidget } from "@/modules/analytics/components/executive-insights";
 import { ClipboardList, TrendingUp, AlertCircle, Building2 } from "lucide-react";
 
@@ -6,10 +7,13 @@ export const metadata = { title: "Painel — Pronto Satisfação" };
 
 export default async function AdminHomePage() {
   const { ctx, db } = await requireTenantDb();
+  const scope = scopeOf(ctx.role, "survey:view");
+  const respSector = responseSectorWhere(ctx, scope);
+  const surveySector = surveySectorWhere(ctx, scope);
 
   const [surveys, responses, openAlerts, latestSummary, tenant] = await Promise.all([
-    db.survey.count(),
-    db.response.count(),
+    db.survey.count({ where: { status: "PUBLISHED", ...surveySector } }),
+    db.response.count({ where: { completed: true, ...respSector } }),
     db.alert.count({ where: { status: "OPEN" } }),
     db.executiveSummary.findFirst({
       where: { tenantId: ctx.tenantId },

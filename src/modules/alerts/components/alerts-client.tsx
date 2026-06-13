@@ -23,7 +23,13 @@ const TYPE_LABELS: Record<string, string> = {
   LOW_VOLUME: "Baixo Volume",
 };
 
-export function AlertsClient({ alerts: initial }: { alerts: Alert[] }) {
+export function AlertsClient({
+  alerts: initial,
+  canManage = false,
+}: {
+  alerts: Alert[];
+  canManage?: boolean;
+}) {
   const [alerts, setAlerts] = useState(initial);
   const [, start] = useTransition();
 
@@ -55,7 +61,11 @@ export function AlertsClient({ alerts: initial }: { alerts: Alert[] }) {
         ) : (
           <div className="divide-y rounded-md border border-destructive/30">
             {open.map((a) => (
-              <AlertRow key={a.id} alert={a} onAck={() => acknowledge(a.id)} />
+              <AlertRow
+                key={a.id}
+                alert={a}
+                onAck={canManage ? () => acknowledge(a.id) : undefined}
+              />
             ))}
           </div>
         )}

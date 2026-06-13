@@ -3,6 +3,9 @@ import crypto from "crypto";
 import { z } from "zod";
 import { env } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
+import { forTenant } from "@/lib/tenant";
+import { logger } from "@/lib/logger";
+import { escapeHtml, safeHref } from "@/lib/html";
 import { enqueueEmail } from "@/server/queues";
 
 /**
@@ -78,7 +81,7 @@ async function handleEvent(data: z.infer<typeof eventSchema>) {
     return Response.json({ ok: true, skipped: true });
   }
 
-  // Find tenant by slug
+  // Find tenant by slug — lookup cross-tenant consciente (slug global).
   const tenant = await prisma.tenant.findFirst({
     where: { slug: data.tenantSlug },
     select: { id: true },
@@ -87,9 +90,36 @@ async function handleEvent(data: z.infer<typeof eventSchema>) {
     return Response.json({ error: "Tenant not found" }, { status: 404 });
   }
 
+  // A partir daqui, todos os modelos com tenantId devem passar pelo guard.
+  const db = forTenant(tenant.id);
+
+  // Idempotência: evita reprocessar o mesmo appointment.id (entregas duplicadas
+  // do Amigo Tech / retries). Procuramos um WebhookLog "in" já gravado para este
+  // evento + appointment.id. O guard de tenant já injeta o tenantId no where.
+  const existing = await db.webhookLog
+    .findFirst({
+      where: {
+        direction: "in",
+        event: data.event,
+        payload: {
+          path: ["appointment", "id"],
+          equals: data.appointment.id,
+        },
+      },
+      select: { id: true },
+    })
+    .catch((err: unknown) => {
+      logger.error("amigo-tech webhook: falha ao checar idempotência", err);
+      return null;
+    });
+
+  if (existing) {
+    return Response.json({ ok: true, duplicate: true });
+  }
+
   // Find active survey (first active survey linked to the sector if possible)
-  const survey = await prisma.survey.findFirst({
-    where: { tenantId: tenant.id, status: "PUBLISHED" },
+  const survey = await db.survey.findFirst({
+    where: { status: "PUBLISHED" },
     select: { id: true, title: true, slug: true },
   });
 
@@ -97,18 +127,24 @@ async function handleEvent(data: z.infer<typeof eventSchema>) {
     return Response.json({ ok: true, note: "No active survey" });
   }
 
-  // Log webhook
-  await prisma.webhookLog.create({
-    data: {
-      tenantId: tenant.id,
-      event: data.event,
-      payload: data as object,
-      direction: "in",
-      success: true,
-    },
-  }).catch(() => null);
+  // Log webhook (marca o appointment como processado — base da idempotência).
+  await db.webhookLog
+    .create({
+      data: {
+        tenantId: tenant.id,
+        event: data.event,
+        payload: data as object,
+        direction: "in",
+        success: true,
+      },
+    })
+    .catch((err: unknown) => {
+      // Não engolir silenciosamente: registrar para diagnóstico.
+      logger.error("amigo-tech webhook: falha ao gravar WebhookLog", err);
+    });
 
-  const surveyUrl = `${env.APP_URL}/p/${survey.slug}`;
+  // Slug é controlado, mas codificamos por segurança ao montar a URL.
+  const surveyUrl = `${env.APP_URL}/p/${encodeURIComponent(survey.slug)}`;
 
   // Send email if patient has email
   if (data.patient.email) {
@@ -124,14 +160,20 @@ async function handleEvent(data: z.infer<typeof eventSchema>) {
 }
 
 function buildEmail(title: string, name: string | undefined, url: string): string {
+  // Dados vindos de terceiro (título da pesquisa, nome do paciente, URL) precisam
+  // ser escapados antes de entrar no HTML, sob pena de injeção / phishing.
+  const safeTitle = escapeHtml(title);
+  const safeName = name ? escapeHtml(name) : "";
+  const href = safeHref(url);
+
   return `<!DOCTYPE html>
 <html lang="pt-BR">
 <body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;color:#333">
-  <h2>${title}</h2>
-  <p>Olá${name ? ` <strong>${name}</strong>` : ""},</p>
+  <h2>${safeTitle}</h2>
+  <p>Olá${safeName ? ` <strong>${safeName}</strong>` : ""},</p>
   <p>Agradecemos por sua visita à Prontoclínica. Sua opinião é muito importante para nós.</p>
   <p style="margin:32px 0">
-    <a href="${url}" style="background:#6366f1;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:bold">
+    <a href="${href}" style="background:#6366f1;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:bold">
       Responder pesquisa
     </a>
   </p>

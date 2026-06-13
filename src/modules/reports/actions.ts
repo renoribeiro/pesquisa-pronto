@@ -13,15 +13,21 @@ const createReportSchema = z.object({
 });
 
 export async function createReport(input: unknown) {
-  const { ctx, db } = await requirePermission("survey:export");
+  const { ctx, db, scope } = await requirePermission("survey:export");
   const data = createReportSchema.parse(input);
+
+  // Escopo de setor: quando o usuário tem permissão limitada a setores,
+  // gravamos os setores permitidos nos filtros para o worker restringir os
+  // dados do relatório (defesa contra exportação cross-setor). Setores vazios
+  // = nenhum dado. `__sectorIds: null` significa acesso total (scope "all").
+  const scopedSectorIds = scope === "sector" ? ctx.sectorIds : null;
 
   const report = await db.report.create({
     data: {
       tenantId: ctx.tenantId,
       type: data.type,
       format: data.format,
-      filters: data.filters ?? {},
+      filters: { ...(data.filters ?? {}), __sectorIds: scopedSectorIds },
       status: "pending",
       generatedById: ctx.userId,
     },

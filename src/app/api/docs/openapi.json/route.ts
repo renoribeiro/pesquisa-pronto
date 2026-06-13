@@ -20,7 +20,8 @@ export async function GET() {
           type: "http",
           scheme: "bearer",
           bearerFormat: "API Key",
-          description: "Chave de API gerada no painel administrativo.",
+          description:
+            "Autenticação via header `Authorization: Bearer <apiKey>`. A chave de API é gerada no painel administrativo e enviada como token Bearer em todas as requisições.",
         },
       },
       schemas: {
@@ -32,6 +33,13 @@ export async function GET() {
             description: { type: "string", nullable: true },
             slug: { type: "string" },
             status: { type: "string", enum: ["DRAFT", "PUBLISHED", "CLOSED", "ARCHIVED"] },
+            pageMode: { type: "string", enum: ["ONE_PER_PAGE", "ALL_IN_ONE"] },
+            opensAt: { type: "string", format: "date-time", nullable: true },
+            closesAt: { type: "string", format: "date-time", nullable: true },
+            available: {
+              type: "boolean",
+              description: "Indica se a pesquisa está publicada e dentro da janela opensAt/closesAt.",
+            },
             url: { type: "string", description: "URL pública do formulário" },
             createdAt: { type: "string", format: "date-time" },
           },
@@ -42,6 +50,7 @@ export async function GET() {
             id: { type: "string" },
             surveyId: { type: "string" },
             channel: { type: "string" },
+            deviceType: { type: "string", nullable: true, description: "Tipo de dispositivo do respondente" },
             npsScore: { type: "integer", nullable: true, minimum: 0, maximum: 10 },
             completed: { type: "boolean" },
             createdAt: { type: "string", format: "date-time" },

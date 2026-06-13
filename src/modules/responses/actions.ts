@@ -5,6 +5,7 @@ import { headers } from "next/headers";
 import { z } from "zod";
 import { SurveyStatus, ChannelType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { forTenant } from "@/lib/tenant";
 import { parseUserAgent } from "@/lib/user-agent";
 import { enqueueAnalyzeResponse } from "@/server/queues";
 import { checkAlerts } from "@/modules/alerts/actions";
@@ -51,6 +52,9 @@ export async function submitResponse(input: unknown): Promise<SubmitResult> {
 
   // Fonte da verdade para o tenant é a própria survey.
   const tenantId = survey.tenantId;
+  // Cliente escopado: todas as consultas a modelos com tenantId daqui em diante
+  // passam pelo tenant guard (reforça o isolamento além do anti-IDOR manual).
+  const db = forTenant(tenantId);
 
   if (survey.status !== SurveyStatus.PUBLISHED) {
     return { ok: false, error: "Esta pesquisa não está ativa." };
@@ -89,14 +93,17 @@ export async function submitResponse(input: unknown): Promise<SubmitResult> {
   // Recipient lookup + duplicate guard
   let recipientId: string | undefined;
   if (d.recipientToken) {
-    const recipient = await prisma.recipient.findUnique({
+    // findFirst (não findUnique): o tenant guard injeta tenantId no where, o que
+    // torna o critério não-único; o token continua sendo o filtro efetivo e a
+    // pertença ao tenant é garantida pelo guard.
+    const recipient = await db.recipient.findFirst({
       where: { token: d.recipientToken },
-      select: { id: true, surveyId: true, tenantId: true, optedOut: true },
+      select: { id: true, surveyId: true, optedOut: true },
     });
-    if (recipient && recipient.surveyId === d.surveyId && recipient.tenantId === tenantId) {
+    if (recipient && recipient.surveyId === d.surveyId) {
       if (recipient.optedOut) return { ok: false, error: "Você optou por não participar." };
       if (!survey.allowMultiple) {
-        const existing = await prisma.response.findFirst({
+        const existing = await db.response.findFirst({
           where: { surveyId: d.surveyId, recipientId: recipient.id, completed: true },
           select: { id: true },
         });
@@ -111,8 +118,10 @@ export async function submitResponse(input: unknown): Promise<SubmitResult> {
   const ua = hdrs.get("user-agent") ?? "";
   const rawIp =
     hdrs.get("x-forwarded-for")?.split(",")[0].trim() ?? hdrs.get("x-real-ip") ?? "";
+  // Hash completo do IP (64 hex chars). Truncar demais (ex.: 20 chars) reduz a
+  // entropia a ponto de viabilizar colisões/força-bruta; mantemos o digest inteiro.
   const ipHash = rawIp
-    ? crypto.createHash("sha256").update(rawIp).digest("hex").slice(0, 20)
+    ? crypto.createHash("sha256").update(rawIp).digest("hex")
     : null;
 
   const { deviceType, os, browser } = parseUserAgent(ua);
@@ -133,11 +142,13 @@ export async function submitResponse(input: unknown): Promise<SubmitResult> {
   // Valida que a distribution informada pertence a esta survey/tenant.
   let distributionId: string | null = null;
   if (d.distributionId) {
-    const dist = await prisma.distribution.findUnique({
+    // findFirst via tenant guard (tenantId injetado no where torna o critério
+    // não-único); a pertença ao tenant é garantida pelo guard.
+    const dist = await db.distribution.findFirst({
       where: { id: d.distributionId },
-      select: { id: true, tenantId: true, surveyId: true },
+      select: { id: true, surveyId: true },
     });
-    if (dist && dist.tenantId === tenantId && dist.surveyId === d.surveyId) {
+    if (dist && dist.surveyId === d.surveyId) {
       distributionId = dist.id;
     }
   }

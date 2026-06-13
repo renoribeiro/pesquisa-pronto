@@ -13,7 +13,10 @@ import { rateLimit } from "@/lib/rate-limit";
 const RESET_TTL_MINUTES = 30;
 
 const requestSchema = z.object({
-  email: z.string().email(),
+  email: z
+    .string()
+    .email()
+    .transform((e) => e.trim().toLowerCase()),
   tenantSlug: z.string().optional(),
 });
 
@@ -50,6 +53,13 @@ export async function requestPasswordReset(input: {
     where: { tenantId_email: { tenantId: tenant.id, email: parsed.data.email } },
   });
   if (!user || !user.active) return genericOk;
+
+  // Invalida quaisquer resets pendentes anteriores do mesmo usuário antes de
+  // criar um novo (evita múltiplos links de reset válidos simultaneamente).
+  await prisma.passwordReset.updateMany({
+    where: { userId: user.id, usedAt: null, expiresAt: { gt: new Date() } },
+    data: { usedAt: new Date() },
+  });
 
   const token = generateToken();
   const expiresAt = new Date(Date.now() + RESET_TTL_MINUTES * 60_000);

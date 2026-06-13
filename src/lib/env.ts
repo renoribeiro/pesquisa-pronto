@@ -20,10 +20,11 @@ const envSchema = z.object({
   MINIO_ACCESS_KEY: z.string().optional(),
   MINIO_SECRET_KEY: z.string().optional(),
 
-  // Auth
+  // Auth — segredo de sessão/JWT. Obrigatório em produção (validado abaixo).
   AUTH_SECRET: z.string().min(1).optional(),
 
-  // IA
+  // IA — opcionais: features de IA (resumos, classificação) ficam desativadas
+  // quando ausentes; cada ponto de uso valida a presença da chave correspondente.
   ANTHROPIC_API_KEY: z.string().optional(),
   ANTHROPIC_MODEL: z.string().default("claude-haiku-4-5-20251001"),
   OPENAI_API_KEY: z.string().optional(),
@@ -55,6 +56,28 @@ const envSchema = z.object({
   DEFAULT_TENANT_SLUG: z.string().default("prontoclinica"),
   SEED_SUPER_ADMIN_EMAIL: z.string().email().optional(),
   SEED_SUPER_ADMIN_PASSWORD: z.string().optional(),
+}).superRefine((val, ctx) => {
+  if (val.NODE_ENV === "production") {
+    // AUTH_SECRET é obrigatório em produção (segurança de sessão).
+    if (!val.AUTH_SECRET) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["AUTH_SECRET"],
+        message: "AUTH_SECRET é obrigatório em produção.",
+      });
+    }
+    // Credenciais/endpoint de armazenamento S3/MinIO são obrigatórios em produção
+    // (não há fallback de credenciais default no código — ver src/lib/storage.ts).
+    for (const k of ["MINIO_ENDPOINT", "MINIO_ACCESS_KEY", "MINIO_SECRET_KEY"] as const) {
+      if (!val[k]) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [k],
+          message: `${k} é obrigatório em produção.`,
+        });
+      }
+    }
+  }
 });
 
 const parsed = envSchema.safeParse(process.env);

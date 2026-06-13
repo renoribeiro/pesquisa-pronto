@@ -11,10 +11,19 @@ let transporter: Transporter | null = null;
 
 function getTransporter(): Transporter {
   if (transporter) return transporter;
+  const port = env.SMTP_PORT ?? 1025;
+  // TLS:
+  //  - 465  → TLS implícito desde a conexão (`secure: true`).
+  //  - 587  → conexão em texto puro + upgrade via STARTTLS (`secure: false` +
+  //           `requireTLS: true`), o padrão de submissão de e-mail.
+  //  - demais portas (ex.: 1025 do Mailpit em dev) → sem TLS.
+  const secure = port === 465;
+  const requireTLS = port === 587;
   transporter = nodemailer.createTransport({
     host: env.SMTP_HOST ?? "localhost",
-    port: env.SMTP_PORT ?? 1025,
-    secure: (env.SMTP_PORT ?? 1025) === 465,
+    port,
+    secure,
+    requireTLS,
     auth:
       env.SMTP_USER && env.SMTP_PASSWORD
         ? { user: env.SMTP_USER, pass: env.SMTP_PASSWORD }

@@ -52,14 +52,30 @@ export interface SkipRule {
   conditions: SkipCondition[];
 }
 
+/**
+ * Comparação "frouxa" de igualdade: se ambos os valores são coercíveis para
+ * número (e não-vazios), compara numericamente (1 == "1"); caso contrário
+ * compara por String(). Isso resolve a skip logic onde a resposta é number e
+ * o valor configurado no builder é string.
+ */
+function looseEq(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  const na = Number(a);
+  const nb = Number(b);
+  const aNum = a !== "" && a != null && !Number.isNaN(na);
+  const bNum = b !== "" && b != null && !Number.isNaN(nb);
+  if (aNum && bNum) return na === nb;
+  return String(a ?? "") === String(b ?? "");
+}
+
 function evalCondition(cond: SkipCondition, answers: Record<string, unknown>): boolean {
   const actual = answers[cond.questionId];
   const expected = cond.value;
   switch (cond.operator) {
     case "eq":
-      return actual === expected;
+      return looseEq(actual, expected);
     case "neq":
-      return actual !== expected;
+      return !looseEq(actual, expected);
     case "gt":
       return Number(actual) > Number(expected);
     case "gte":
@@ -69,10 +85,10 @@ function evalCondition(cond: SkipCondition, answers: Record<string, unknown>): b
     case "lte":
       return Number(actual) <= Number(expected);
     case "contains":
-      if (Array.isArray(actual)) return actual.includes(expected);
-      return String(actual ?? "").includes(String(expected));
+      if (Array.isArray(actual)) return actual.some((a) => looseEq(a, expected));
+      return String(actual ?? "").includes(String(expected ?? ""));
     case "in":
-      return Array.isArray(expected) && expected.includes(actual);
+      return Array.isArray(expected) && expected.some((e) => looseEq(actual, e));
     default:
       return false;
   }

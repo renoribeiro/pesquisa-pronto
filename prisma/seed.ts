@@ -25,8 +25,23 @@ const DEFAULT_SECTORS = [
 async function main() {
   const tenantName = process.env.DEFAULT_TENANT_NAME ?? "Prontoclínica de Fortaleza";
   const tenantSlug = process.env.DEFAULT_TENANT_SLUG ?? "prontoclinica";
-  const adminEmail = process.env.SEED_SUPER_ADMIN_EMAIL ?? "admin@prontoclinicafortaleza.com.br";
-  const adminPassword = process.env.SEED_SUPER_ADMIN_PASSWORD ?? "ChangeMe123!";
+  const adminEmail = (
+    process.env.SEED_SUPER_ADMIN_EMAIL ?? "admin@prontoclinicafortaleza.com.br"
+  )
+    .trim()
+    .toLowerCase();
+  const providedPassword = process.env.SEED_SUPER_ADMIN_PASSWORD;
+  const adminPassword = providedPassword ?? "ChangeMe123!";
+  if (!providedPassword) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error(
+        "SEED_SUPER_ADMIN_PASSWORD é obrigatório em produção — recusando seed com senha fraca padrão.",
+      );
+    }
+    console.warn(
+      "⚠ Usando senha padrão fraca para o super admin. Defina SEED_SUPER_ADMIN_PASSWORD.",
+    );
+  }
 
   // Tenant
   const tenant = await prisma.tenant.upsert({

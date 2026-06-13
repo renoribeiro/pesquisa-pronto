@@ -38,7 +38,16 @@ const ROLES = [
   { value: "OPERATOR", label: "Operador" },
   { value: "VIEWER", label: "Visualizador" },
   { value: "SUPER_ADMIN", label: "Super Admin" },
-];
+] as const;
+
+type RoleValue = (typeof ROLES)[number]["value"];
+
+const ROLE_VALUES = ROLES.map((r) => r.value) as readonly string[];
+
+/** Garante que um valor vindo do Select seja um papel válido (fallback VIEWER). */
+function toRole(v: unknown): RoleValue {
+  return typeof v === "string" && ROLE_VALUES.includes(v) ? (v as RoleValue) : "VIEWER";
+}
 
 interface UserRow {
   id: string;
@@ -57,7 +66,11 @@ export function UsersClient({
 }) {
   const [pending, start] = useTransition();
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ name: "", email: "", role: "VIEWER" });
+  const [form, setForm] = useState<{ name: string; email: string; role: RoleValue }>({
+    name: "",
+    email: "",
+    role: "VIEWER",
+  });
 
   const roleOptions = canSuperAdmin ? ROLES : ROLES.filter((r) => r.value !== "SUPER_ADMIN");
 
@@ -109,7 +122,7 @@ export function UsersClient({
                 <Label>Perfil</Label>
                 <Select
                   value={form.role}
-                  onValueChange={(v) => setForm({ ...form, role: (v as string) ?? "VIEWER" })}
+                  onValueChange={(v) => setForm({ ...form, role: toRole(v) })}
                 >
                   <SelectTrigger>
                     <SelectValue />

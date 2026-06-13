@@ -28,6 +28,12 @@ export const authConfig = {
       if (isAdminArea) return isLoggedIn;
       return true;
     },
+    // TODO(seguranca): o JWT pode ficar "stale" — papel/setores/ativo só são
+    // relidos do banco no próximo login. Não há revalidação contra o DB
+    // (ex.: um campo `tokenVersion` no User comparado aqui para invalidar
+    // sessões após mudança de papel/desativação). Implementar quando o
+    // strategy migrar para algo com checagem por requisição, ou adicionar
+    // `tokenVersion` ao modelo User e compará-lo aqui invalidando o token.
     jwt({ token, user }) {
       if (user) {
         const u = user as Partial<AppUserFields>;

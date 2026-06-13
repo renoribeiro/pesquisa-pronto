@@ -12,6 +12,10 @@ export async function authenticateApiKey(req: NextRequest): Promise<ApiContext |
   const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : null;
   if (!token) return null;
 
+  // Comparação por hash (nunca armazenamos/consultamos o token em claro) e
+  // validação de estado: apenas chaves `active` são aceitas. O schema atual
+  // (model ApiKey) não possui `expiresAt`; quando esse campo for adicionado,
+  // incluir aqui `OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }]`.
   const tokenHash = hashToken(token);
   const apiKey = await prisma.apiKey.findFirst({
     where: { keyHash: tokenHash, active: true },

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { createTheme, updateTheme } from "@/modules/themes/actions";
 import { themeToStyleString, type ThemeConfig } from "@/modules/themes/theme-config";
+import { sanitizeCustomCss } from "@/lib/sanitize-css";
 import { THEME_PRESETS, GOOGLE_FONTS } from "@/modules/themes/presets";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -243,7 +244,7 @@ export function ThemePreview({ config }: { config: ThemeConfig }) {
     >
       <div style={{ all: "unset" }}>
         <style>{`[data-theme-preview]{${themeToStyleString(config)}}`}</style>
-        {config.customCss ? <style>{config.customCss}</style> : null}
+        {config.customCss ? <style>{sanitizeCustomCss(config.customCss)}</style> : null}
       </div>
       <div className="flex justify-center p-6" style={{ background: "var(--ps-page-bg)" }}>
         <div

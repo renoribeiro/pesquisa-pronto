@@ -3,6 +3,8 @@
  * HTML simples e responsivo (inline styles para compatibilidade com clientes).
  */
 
+import { escapeHtml, safeHref } from "@/lib/html";
+
 function layout(title: string, bodyHtml: string): string {
   return `<!doctype html>
 <html lang="pt-BR">
@@ -24,14 +26,14 @@ function layout(title: string, bodyHtml: string): string {
 }
 
 function button(url: string, label: string): string {
-  return `<a href="${url}" style="display:inline-block;background:#0f4c81;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:bold;">${label}</a>`;
+  return `<a href="${safeHref(url)}" style="display:inline-block;background:#0f4c81;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:bold;">${escapeHtml(label)}</a>`;
 }
 
 export function passwordResetEmail(p: { name: string; url: string; ttlMinutes: number }): string {
   return layout(
     "Redefinição de senha",
-    `<p>Olá, ${p.name}.</p>
-     <p>Recebemos um pedido para redefinir sua senha. Clique no botão abaixo (válido por ${p.ttlMinutes} minutos):</p>
+    `<p>Olá, ${escapeHtml(p.name)}.</p>
+     <p>Recebemos um pedido para redefinir sua senha. Clique no botão abaixo (válido por ${escapeHtml(p.ttlMinutes)} minutos):</p>
      <p style="margin:20px 0;">${button(p.url, "Redefinir senha")}</p>
      <p style="color:#6b7280;font-size:13px;">Se você não solicitou, ignore este email.</p>`,
   );
@@ -40,8 +42,8 @@ export function passwordResetEmail(p: { name: string; url: string; ttlMinutes: n
 export function inviteEmail(p: { name: string; url: string; inviterName?: string }): string {
   return layout(
     "Convite de acesso",
-    `<p>Olá, ${p.name}.</p>
-     <p>${p.inviterName ? `${p.inviterName} convidou` : "Você foi convidado"} você para acessar o painel da Pronto Satisfação.</p>
+    `<p>Olá, ${escapeHtml(p.name)}.</p>
+     <p>${p.inviterName ? `${escapeHtml(p.inviterName)} convidou` : "Você foi convidado"} você para acessar o painel da Pronto Satisfação.</p>
      <p>Defina sua senha para ativar a conta:</p>
      <p style="margin:20px 0;">${button(p.url, "Definir senha e entrar")}</p>`,
   );
