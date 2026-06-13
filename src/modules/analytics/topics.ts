@@ -35,7 +35,7 @@ async function fetchEmbeddedItems(
   const sql = `
     SELECT a."id", a."responseId", a."sentiment"::text AS sentiment, a."summary", a."embedding"::text AS embedding
     FROM "ai_analyses" a
-    JOIN "responses" r ON r."id" = a."responseId"
+    JOIN "responses" r ON r."id" = a."responseId" AND r."tenantId" = $1
     WHERE a."tenantId" = $1
       AND a."embedding" IS NOT NULL
       AND a."processedAt" >= $2 AND a."processedAt" <= $3
@@ -95,36 +95,48 @@ export async function extractTopicClusters(opts: ExtractTopicsOptions): Promise<
 
   const clusters = clusterByThreshold(current);
 
-  // Sempre substitui o snapshot anterior (feature de "temas atuais").
-  await db.topicCluster.deleteMany({});
+  // A TAG do snapshot (coluna surveyId) é `surveyId ?? null` — uma pesquisa
+  // específica (worker) ou tenant-wide (null). O recorte de deleção DEVE casar
+  // exatamente essa tag, NÃO o filtro de entrada `surveyIds` (que só restringe
+  // quais respostas alimentam o clustering). Tag ≡ delete garante substituição
+  // idempotente do snapshot, sem acúmulo nem mistura de escopos.
+  const deleteWhere = surveyId ? { surveyId } : { surveyId: null };
 
-  if (clusters.length === 0) return 0;
+  if (clusters.length === 0) {
+    await db.topicCluster.deleteMany({ where: deleteWhere });
+    return 0;
+  }
 
-  // Rótulos: uma única chamada ao Claude com as amostras de cada cluster.
+  // Rótulos ANTES da transação (chamada de rede ao Claude): se a IA falhar, o
+  // snapshot existente não é destruído.
   const samples = clusters.map((c) =>
     c.members.map((m) => m.summary ?? "").filter((s) => s.trim().length > 0),
   );
-  const labels = await labelTopicClusters(samples);
+  const labels = await labelTopicClusters(samples, { tenantId, jobType: "topics" });
 
-  await Promise.all(
-    clusters.map((c, i) => {
-      const volume = c.members.length;
-      const prevVolume = countMatches(c.centroid, previous);
-      return db.topicCluster.create({
-        data: {
-          tenantId,
-          surveyId: surveyId ?? null,
-          label: labels[i],
-          volume,
-          sentiment: dominantSentiment(c.members),
-          trend: computeTrend(volume, prevVolume),
-          periodStart,
-          periodEnd,
-          sampleResponseIds: c.members.slice(0, 5).map((m) => m.responseId),
-        },
-      });
-    }),
-  );
+  // delete + create na MESMA transação: evita janela sem temas.
+  await db.$transaction(async (tx) => {
+    await tx.topicCluster.deleteMany({ where: deleteWhere });
+    await Promise.all(
+      clusters.map((c, i) => {
+        const volume = c.members.length;
+        const prevVolume = countMatches(c.centroid, previous);
+        return tx.topicCluster.create({
+          data: {
+            tenantId,
+            surveyId: surveyId ?? null,
+            label: labels[i],
+            volume,
+            sentiment: dominantSentiment(c.members),
+            trend: computeTrend(volume, prevVolume),
+            periodStart,
+            periodEnd,
+            sampleResponseIds: c.members.slice(0, 5).map((m) => m.responseId),
+          },
+        });
+      }),
+    );
+  });
 
   return clusters.length;
 }

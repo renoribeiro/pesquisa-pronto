@@ -210,7 +210,7 @@ export async function submitResponse(input: unknown): Promise<SubmitResult> {
 
   // Check and trigger alerts
   try {
-    await checkAlerts(tenantId, d.surveyId, npsScore);
+    await checkAlerts(tenantId, d.surveyId, npsScore, response.id);
   } catch (err) {
     console.error(`[submitResponse] erro ao checar alertas:`, err);
   }

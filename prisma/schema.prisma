@@ -170,6 +170,7 @@ model Tenant {
   aiAnalyses        AIAnalysis[]
   topicClusters     TopicCluster[]
   execSummaries     ExecutiveSummary[]
+  aiUsageLogs       AIUsageLog[]
   alerts            Alert[]
   alertThresholds   AlertThreshold[]
   reports           Report[]
@@ -619,6 +620,7 @@ model AIAnalysis {
   sentiment   Sentiment
   intensity   Int // 0-100
   emotions    Json? // ["frustração", "gratidão", ...]
+  entities    Json? // [{ "type": "doctor"|"sector"|"procedure", "name": "..." }]
   summary     String?
   embedding   Unsupported("vector(1536)")?
   processedAt DateTime  @default(now())
@@ -662,6 +664,22 @@ model ExecutiveSummary {
   @@map("executive_summaries")
 }
 
+model AIUsageLog {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  jobType      String // sentiment | embedding | summary | topics | rag | suggestion | entities
+  model        String
+  inputTokens  Int      @default(0)
+  outputTokens Int      @default(0)
+  costUsd      Float    @default(0)
+  createdAt    DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([tenantId, createdAt])
+  @@map("ai_usage_logs")
+}
+
 model Alert {
   id             String      @id @default(cuid())
   tenantId       String
@@ -671,6 +689,7 @@ model Alert {
   title          String
   message        String
   metadata       Json?
+  suggestedAction String?    // rascunho de mensagem de close-loop gerado por IA
   surveyId       String?
   survey         Survey?     @relation(fields: [surveyId], references: [id], onDelete: SetNull)
   acknowledgedAt DateTime?

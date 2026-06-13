@@ -53,9 +53,9 @@ async function analyzeResponse({ responseId, tenantId }: AnalyzeResponseJob) {
   }
 
   try {
-    const result = await analyzeSentiment(textAnswers);
+    const result = await analyzeSentiment(textAnswers, { tenantId, jobType: "sentiment" });
     const combinedText = textAnswers.join("\n\n");
-    const embedding = await generateEmbedding(combinedText);
+    const embedding = await generateEmbedding(combinedText, { tenantId, jobType: "embedding" });
 
     const analysis = await db.aIAnalysis.upsert({
       where: { responseId },
@@ -63,6 +63,7 @@ async function analyzeResponse({ responseId, tenantId }: AnalyzeResponseJob) {
         sentiment: result.sentiment,
         intensity: result.intensity,
         emotions: result.emotions,
+        entities: result.entities,
         summary: result.summary,
       },
       create: {
@@ -71,6 +72,7 @@ async function analyzeResponse({ responseId, tenantId }: AnalyzeResponseJob) {
         sentiment: result.sentiment,
         intensity: result.intensity,
         emotions: result.emotions,
+        entities: result.entities,
         summary: result.summary,
       },
     });
@@ -93,7 +95,7 @@ async function analyzeResponse({ responseId, tenantId }: AnalyzeResponseJob) {
   }
 }
 
-async function generateSummary({ tenantId, periodStart, periodEnd }: GenerateSummaryJob) {
+async function generateSummary({ tenantId, periodStart, periodEnd, generatedBy }: GenerateSummaryJob) {
   const db = forTenant(tenantId);
 
   try {
@@ -104,6 +106,7 @@ async function generateSummary({ tenantId, periodStart, periodEnd }: GenerateSum
         processedAt: { gte: new Date(periodStart), lte: new Date(periodEnd) },
       },
       select: { emotions: true, summary: true },
+      orderBy: { processedAt: "desc" }, // determinístico: as 50 análises mais recentes
       take: 50,
     });
 
@@ -135,6 +138,7 @@ async function generateSummary({ tenantId, periodStart, periodEnd }: GenerateSum
       nps.total,
       topEmotions,
       recentComments,
+      { tenantId, jobType: "summary" },
     );
 
     await db.executiveSummary.create({
@@ -144,7 +148,7 @@ async function generateSummary({ tenantId, periodStart, periodEnd }: GenerateSum
         periodEnd: new Date(periodEnd),
         content: summaryText,
         npsAvg: nps.score,
-        generatedBy: "auto",
+        generatedBy: generatedBy ?? "auto",
       },
     });
 

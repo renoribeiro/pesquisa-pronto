@@ -3,8 +3,32 @@
 import { requirePermission, responseSectorWhere, surveySectorWhere } from "@/lib/session";
 import { getNpsSummary } from "@/modules/analytics/queries";
 import { extractTopicClusters } from "@/modules/analytics/topics";
+import { answerQuestion } from "@/modules/analytics/rag";
+import { getEntityInsights as queryEntityInsights } from "@/modules/analytics/entities";
+import { getAiCostSummary as queryAiCostSummary } from "@/modules/analytics/ai-cost";
 import { generateExecutiveSummary } from "@/lib/ai";
 import { revalidatePath } from "next/cache";
+import type { SessionContext } from "@/lib/session";
+import type { Scope } from "@/lib/rbac";
+import type { TenantClient } from "@/lib/tenant";
+
+/**
+ * Para usuários com escopo de setor, retorna os ids das pesquisas visíveis;
+ * para escopo total, retorna null (sem restrição). Centraliza a regra usada
+ * pelas features de IA (RAG, entidades).
+ */
+async function scopedSurveyIds(
+  ctx: SessionContext,
+  scope: Scope,
+  db: TenantClient,
+): Promise<string[] | null> {
+  if (scope !== "sector") return null;
+  const surveys = await db.survey.findMany({
+    where: surveySectorWhere(ctx, scope),
+    select: { id: true },
+  });
+  return surveys.map((s) => s.id);
+}
 
 export async function getLatestAiSummary() {
   const { ctx, db } = await requirePermission("survey:view");
@@ -14,27 +38,27 @@ export async function getLatestAiSummary() {
   });
 }
 
-/** Lê os temas (clusters) atuais, ordenados por volume. */
+/**
+ * Lê o snapshot de temas (clusters) tenant-wide, ordenado por volume.
+ * Temas são um agregado anônimo de nível de tenant (apenas rótulos), exposto a
+ * quem tem escopo total — não é particionado por setor (ver generateTopicClusters).
+ */
 export async function getTopicClusters() {
-  const { db } = await requirePermission("survey:view");
-  return db.topicCluster.findMany({ orderBy: { volume: "desc" } });
+  const { db, scope } = await requirePermission("survey:view");
+  if (scope !== "all") return [];
+  return db.topicCluster.findMany({ where: { surveyId: null }, orderBy: { volume: "desc" } });
 }
 
 /**
  * Extrai temas recorrentes dos comentários dos últimos 30 dias usando os
- * embeddings já gravados. Respeita o escopo de setor do usuário.
+ * embeddings já gravados. Os temas são um agregado tenant-wide (rótulos
+ * anônimos como "Tempo de espera"); o modelo TopicCluster não representa um
+ * snapshot por-setor, então a geração é tenant-wide e restrita a escopo total.
  */
 export async function generateTopicClusters() {
   const { ctx, db, scope } = await requirePermission("survey:view");
-
-  // Escopo de setor: restringe às pesquisas dos setores do usuário.
-  let surveyIds: string[] | null = null;
-  if (scope === "sector") {
-    const surveys = await db.survey.findMany({
-      where: surveySectorWhere(ctx, scope),
-      select: { id: true },
-    });
-    surveyIds = surveys.map((s) => s.id);
+  if (scope !== "all") {
+    throw new Error("A geração de temas está disponível apenas para administradores da clínica.");
   }
 
   const periodEnd = new Date();
@@ -45,11 +69,11 @@ export async function generateTopicClusters() {
     tenantId: ctx.tenantId,
     periodStart,
     periodEnd,
-    surveyIds,
+    // tenant-wide: sem filtro de entrada, snapshot tag = surveyId null.
   });
 
   revalidatePath("/admin/analytics");
-  return db.topicCluster.findMany({ orderBy: { volume: "desc" } });
+  return db.topicCluster.findMany({ where: { surveyId: null }, orderBy: { volume: "desc" } });
 }
 
 export async function generateAiSummary() {
@@ -60,9 +84,14 @@ export async function generateAiSummary() {
   // 1. Obter consolidados de NPS (escopado por setor quando aplicável)
   const nps = await getNpsSummary(db, tenantId, undefined, sectorWhere);
 
-  // 2. Buscar análises de IA recentes para extrair emoções e resumos
+  // 2. Buscar análises de IA recentes para extrair emoções e resumos.
+  //    ESCOPO DE SETOR: AIAnalysis liga-se ao setor via response.survey.sectors,
+  //    então o filtro de Response (responseSectorWhere) é aplicado sob `response`.
+  //    Sem isto, um SECTOR_MANAGER receberia emoções/comentários de outros setores.
+  const analysisSectorWhere =
+    scope === "sector" ? { response: responseSectorWhere(ctx, scope) } : {};
   const analyses = await db.aIAnalysis.findMany({
-    where: { tenantId },
+    where: { tenantId, ...analysisSectorWhere },
     select: { emotions: true, summary: true },
     orderBy: { processedAt: "desc" },
     take: 50,
@@ -100,6 +129,7 @@ export async function generateAiSummary() {
     nps.total,
     topEmotions,
     recentComments,
+    { tenantId, jobType: "summary" },
   );
 
   // Salvar no banco
@@ -117,4 +147,39 @@ export async function generateAiSummary() {
   revalidatePath("/admin");
   revalidatePath("/admin/analytics");
   return summary;
+}
+
+/**
+ * RAG — "Pergunte aos seus dados": responde uma pergunta do gestor com base
+ * nos comentários de pacientes (escopado por setor). Limita o tamanho da
+ * pergunta para conter custo/abuso.
+ */
+export async function askData(question: string) {
+  const { ctx, db, scope } = await requirePermission("survey:view");
+  const q = String(question ?? "").trim().slice(0, 500);
+  if (!q) return { answer: "Faça uma pergunta sobre os comentários dos pacientes.", sources: [] };
+  const surveyIds = await scopedSurveyIds(ctx, scope, db);
+  return answerQuestion(db, ctx.tenantId, q, {
+    surveyIds: surveyIds ?? undefined,
+    usageCtx: { tenantId: ctx.tenantId, jobType: "rag" },
+  });
+}
+
+/** Entidades clínicas mencionadas (médico/setor/procedimento) cruzadas com NPS. */
+export async function getEntityInsights() {
+  const { ctx, db, scope } = await requirePermission("survey:view");
+  const surveyIds = await scopedSurveyIds(ctx, scope, db);
+  return queryEntityInsights(db, ctx.tenantId, { surveyIds: surveyIds ?? undefined });
+}
+
+/**
+ * Resumo de custo de IA dos últimos 30 dias. Métrica tenant-wide (AIUsageLog
+ * não é setorizável) — exposta apenas a quem tem escopo total.
+ */
+export async function getAiCostSummary() {
+  const { ctx, db, scope } = await requirePermission("survey:view");
+  if (scope !== "all") {
+    return { totalCostUsd: 0, totalInputTokens: 0, totalOutputTokens: 0, byJobType: [], sinceDays: 30 };
+  }
+  return queryAiCostSummary(db, ctx.tenantId, 30);
 }

@@ -2,7 +2,7 @@ import "dotenv/config";
 import { Worker, type Job, type Processor } from "bullmq";
 import IORedis from "ioredis";
 import { env } from "@/lib/env";
-import { QUEUE_NAMES, type PingJob } from "@/server/queues";
+import { QUEUE_NAMES, getQueue, type PingJob } from "@/server/queues";
 import { processEmail } from "@/workers/processors/email";
 
 /**
@@ -44,7 +44,10 @@ const workers: Worker[] = [];
 
 for (const [queueName, processor] of Object.entries(PROCESSORS)) {
   if (!processor) continue;
-  const worker = new Worker(queueName, processor, { connection, concurrency: 5 });
+  // Scheduler roda serialmente (concurrency 1): a checagem de tendência faz
+  // read-then-create de alertas; execução concorrente poderia duplicar.
+  const concurrency = queueName === QUEUE_NAMES.scheduler ? 1 : 5;
+  const worker = new Worker(queueName, processor, { connection, concurrency });
   worker.on("failed", (job, err) => {
     console.error(`[worker:${queueName}] job ${job?.id} (${job?.name}) falhou:`, err.message);
   });
@@ -52,6 +55,25 @@ for (const [queueName, processor] of Object.entries(PROCESSORS)) {
 }
 
 console.log("🛠  Worker iniciado. Filas:", Object.values(QUEUE_NAMES).join(", "));
+
+// Agenda a checagem periódica de tendência negativa (alertas preditivos).
+// O dedupe de repeatable do BullMQ é pela repeat-key (nome + opções), NÃO pelo
+// jobId — então, se o intervalo mudar num deploy futuro, o repeatable antigo
+// ficaria órfão. Por isso removemos os "trend-check" existentes antes de
+// re-adicionar, garantindo um único scheduler ativo.
+const schedulerQueue = getQueue(QUEUE_NAMES.scheduler);
+schedulerQueue
+  .getRepeatableJobs()
+  .then((jobs) =>
+    Promise.all(
+      jobs
+        .filter((j) => j.name === "trend-check")
+        .map((j) => schedulerQueue.removeRepeatableByKey(j.key)),
+    ),
+  )
+  .then(() => schedulerQueue.add("trend-check", {}, { repeat: { every: 60 * 60 * 1000 } }))
+  .then(() => console.log("[worker:scheduler] trend-check agendado (a cada 1h)"))
+  .catch((e) => console.error("[worker:scheduler] falha ao agendar trend-check:", e));
 
 async function shutdown() {
   console.log("\n[worker] encerrando...");

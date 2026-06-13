@@ -9,10 +9,13 @@ export default async function AlertsPage() {
   const { ctx } = await requirePermission("survey:view");
   const canManage = can(ctx.role, "alert:manage");
   const alerts = await getAlerts();
+  // `key` derivada dos dados: após router.refresh() (ex.: trend-check criar um
+  // alerta), o conjunto muda e o AlertsClient remonta com a lista atualizada.
+  const alertsKey = alerts.map((a) => `${a.id}:${a.status}`).join(",");
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold">Alertas</h1>
-      <AlertsClient alerts={alerts} canManage={canManage} />
+      <AlertsClient key={alertsKey} alerts={alerts} canManage={canManage} />
     </div>
   );
 }
