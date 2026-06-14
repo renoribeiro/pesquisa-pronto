@@ -1,4 +1,9 @@
-import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+  HeadBucketCommand,
+} from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { env } from "@/lib/env";
 
@@ -58,4 +63,12 @@ export async function getObjectUrl(key: string, expiresIn = 3600): Promise<strin
 export function publicUrl(key: string): string {
   const base = (env.MINIO_ENDPOINT ?? DEV_ENDPOINT).replace(/\/$/, "");
   return `${base}/${BUCKET}/${key}`;
+}
+
+/**
+ * Verifica conectividade/existência do bucket de armazenamento (health-check).
+ * Lança em caso de falha (credenciais ausentes, bucket inacessível, rede).
+ */
+export async function checkStorage(): Promise<void> {
+  await getClient().send(new HeadBucketCommand({ Bucket: BUCKET }));
 }

@@ -588,6 +588,10 @@ model Response {
   @@index([distributionId])
   @@index([recipientId])
   @@index([tenantId, createdAt])
+  // Filtros mais comuns do dashboard/analytics (volume): respostas completas por
+  // período e agregação de NPS por tenant.
+  @@index([tenantId, completed, createdAt])
+  @@index([tenantId, npsScore])
   @@map("responses")
 }
 
