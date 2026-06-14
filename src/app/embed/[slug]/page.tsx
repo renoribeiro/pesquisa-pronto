@@ -1,8 +1,10 @@
+import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { SurveyStatus } from "@prisma/client";
 import { PublicForm } from "@/modules/responses/components/public-form";
 import { themeConfigSchema } from "@/modules/themes/theme-config";
+import { resolveLocale, LOCALE_COOKIE } from "@/lib/i18n";
 import type { SkipRule } from "@/modules/surveys/logic";
 
 /**
@@ -76,5 +78,7 @@ export default async function EmbedSurveyPage({
     rules,
   };
 
-  return <PublicForm survey={publicSurvey} />;
+  const locale = resolveLocale((await cookies()).get(LOCALE_COOKIE)?.value);
+
+  return <PublicForm survey={publicSurvey} locale={locale} />;
 }

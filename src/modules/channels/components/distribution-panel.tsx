@@ -2,13 +2,18 @@
 
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
-import { getOrCreateLinkDistribution, dispatchSurveyByEmail } from "@/modules/channels/actions";
+import {
+  getOrCreateLinkDistribution,
+  getOrCreateEmbedDistribution,
+  dispatchSurveyByEmail,
+} from "@/modules/channels/actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
+import { BatchDispatchForm } from "@/modules/channels/components/batch-dispatch-form";
 
 interface DistributionPanelProps {
   surveyId: string;
@@ -46,6 +51,8 @@ export function DistributionPanel({ surveyId, surveySlug }: DistributionPanelPro
         <TabsTrigger value="link">Link direto</TabsTrigger>
         <TabsTrigger value="qr">QR Code</TabsTrigger>
         <TabsTrigger value="email">Email</TabsTrigger>
+        <TabsTrigger value="batch">Lote (CSV/Excel)</TabsTrigger>
+        <TabsTrigger value="embed">Embed</TabsTrigger>
       </TabsList>
 
       <TabsContent value="link">
@@ -90,6 +97,21 @@ export function DistributionPanel({ surveyId, surveySlug }: DistributionPanelPro
       <TabsContent value="email">
         <EmailDispatchForm surveyId={surveyId} />
       </TabsContent>
+
+      <TabsContent value="batch">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Disparo em lote</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <BatchDispatchForm surveyId={surveyId} />
+          </CardContent>
+        </Card>
+      </TabsContent>
+
+      <TabsContent value="embed">
+        <EmbedPanel surveyId={surveyId} surveySlug={surveySlug} baseUrl={baseUrl} />
+      </TabsContent>
     </Tabs>
   );
 }
@@ -117,6 +139,85 @@ function QrCodeDisplay({ url }: { url: string }) {
         Baixar QR Code
       </Button>
     </div>
+  );
+}
+
+function CopyableSnippet({ code }: { code: string }) {
+  const [copied, setCopied] = useState(false);
+  function copy() {
+    navigator.clipboard.writeText(code).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
+  return (
+    <div className="space-y-2">
+      <pre className="overflow-x-auto rounded-md border bg-muted/40 p-3 text-xs leading-relaxed">
+        <code>{code}</code>
+      </pre>
+      <Button variant="outline" size="sm" onClick={copy}>
+        {copied ? "Copiado!" : "Copiar código"}
+      </Button>
+    </div>
+  );
+}
+
+function EmbedPanel({
+  surveyId,
+  surveySlug,
+  baseUrl,
+}: {
+  surveyId: string;
+  surveySlug: string;
+  baseUrl: string;
+}) {
+  const [, start] = useTransition();
+
+  const inlineSnippet = `<iframe src="${baseUrl}/embed/${surveySlug}"\n  style="border:0;width:100%;max-width:640px;height:600px"\n  title="Pesquisa de satisfação" loading="lazy"></iframe>`;
+  const popupSnippet = `<script src="${baseUrl}/embed.js"\n  data-survey="${surveySlug}"\n  data-mode="popup"\n  data-label="Avalie-nos"\n  data-color="#901A1E" defer></script>`;
+
+  function activateEmbed() {
+    start(async () => {
+      try {
+        await getOrCreateEmbedDistribution(surveyId);
+        toast.success("Canal de embed registrado.");
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Erro ao registrar canal.");
+      }
+    });
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          Incorporar (embed)
+          <Badge variant="secondary">EMBED</Badge>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="space-y-2">
+          <Label>Inline (iframe na página)</Label>
+          <p className="text-xs text-muted-foreground">
+            Cole onde o formulário deve aparecer dentro da sua página.
+          </p>
+          <CopyableSnippet code={inlineSnippet} />
+        </div>
+
+        <div className="space-y-2">
+          <Label>Popup flutuante (botão no canto)</Label>
+          <p className="text-xs text-muted-foreground">
+            Cole antes de <code className="font-mono">&lt;/body&gt;</code>. Mostra um botão flutuante
+            que abre o formulário em um modal.
+          </p>
+          <CopyableSnippet code={popupSnippet} />
+        </div>
+
+        <Button variant="outline" size="sm" onClick={activateEmbed}>
+          Registrar canal de embed
+        </Button>
+      </CardContent>
+    </Card>
   );
 }
 

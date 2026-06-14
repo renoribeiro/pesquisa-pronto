@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 import { AlertType } from "@prisma/client";
 import { requirePermission, surveySectorWhere, type SessionContext } from "@/lib/session";
 import type { Scope } from "@/lib/rbac";
@@ -9,7 +10,9 @@ import { redis } from "@/lib/redis";
 import { forTenant, type TenantClient } from "@/lib/tenant";
 import { getWhatsAppProvider } from "@/lib/channels/whatsapp";
 import { suggestCloseLoopMessage } from "@/lib/ai";
+import { audit } from "@/lib/audit";
 import { checkTrendAlerts } from "@/modules/alerts/trend";
+import { notifyAlert } from "@/modules/notifications/service";
 
 /**
  * Filtro de alertas por escopo de setor. Alertas tenant-wide (surveyId null,
@@ -183,6 +186,14 @@ async function createAlertIfNotExists(
   await db.alert.create({
     data: { ...data, tenantId },
   });
+
+  // Notifica a gestão (central de notificações + e-mail conforme preferência).
+  await notifyAlert(db, tenantId, {
+    alertType: data.type,
+    title: data.title,
+    body: data.message,
+    metadata: data.metadata,
+  });
 }
 
 export async function acknowledgeAlert(alertId: string) {
@@ -285,4 +296,55 @@ export async function runTrendCheck(): Promise<number> {
   const created = await checkTrendAlerts(db, ctx.tenantId);
   revalidatePath("/admin/alerts");
   return created;
+}
+
+// ── Configuração de limiares (thresholds) ─────────────────────
+
+export interface AlertThresholdView {
+  type: AlertType;
+  active: boolean;
+  config: Record<string, unknown>;
+}
+
+/** Lê os limiares configurados do tenant, indexados por tipo de alerta. */
+export async function getAlertThresholds(): Promise<AlertThresholdView[]> {
+  const { db } = await requirePermission("system:configure");
+  const rows = await db.alertThreshold.findMany();
+  return rows.map((r) => ({
+    type: r.type,
+    active: r.active,
+    config:
+      r.config && typeof r.config === "object" && !Array.isArray(r.config)
+        ? (r.config as Record<string, unknown>)
+        : {},
+  }));
+}
+
+const thresholdSchema = z.object({
+  type: z.enum(["DETRACTOR", "NEGATIVE_TREND", "EMERGING_THEME", "LOW_VOLUME"]),
+  active: z.boolean(),
+  // Config aceita apenas chaves numéricas conhecidas + telefones (string) para
+  // DETRACTOR. Valores são validados/normalizados por tipo antes de persistir.
+  config: z.record(z.string(), z.union([z.number(), z.string()])).default({}),
+});
+
+/** Cria/atualiza o limiar de um tipo de alerta para o tenant atual. */
+export async function upsertAlertThreshold(input: unknown): Promise<void> {
+  const { ctx, db } = await requirePermission("system:configure");
+  const data = thresholdSchema.parse(input);
+  const type = data.type as AlertType;
+
+  await db.alertThreshold.upsert({
+    where: { tenantId_type: { tenantId: ctx.tenantId, type } },
+    create: { tenantId: ctx.tenantId, type, config: data.config, active: data.active },
+    update: { config: data.config, active: data.active },
+  });
+
+  await audit({
+    tenantId: ctx.tenantId,
+    userId: ctx.userId,
+    action: "alert.threshold_updated",
+    metadata: { type, active: data.active },
+  });
+  revalidatePath("/admin/settings");
 }

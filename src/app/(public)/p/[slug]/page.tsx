@@ -1,9 +1,11 @@
+import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { forTenant } from "@/lib/tenant";
 import { SurveyStatus } from "@prisma/client";
 import { PublicForm } from "@/modules/responses/components/public-form";
 import { themeConfigSchema } from "@/modules/themes/theme-config";
+import { resolveLocale, LOCALE_COOKIE } from "@/lib/i18n";
 import type { SkipRule } from "@/modules/surveys/logic";
 import type { Metadata } from "next";
 
@@ -132,7 +134,9 @@ export default async function PublicSurveyPage({
     distributionId: survey.distributions[0]?.id,
   };
 
-  return <PublicForm survey={publicSurvey} />;
+  const locale = resolveLocale((await cookies()).get(LOCALE_COOKIE)?.value);
+
+  return <PublicForm survey={publicSurvey} locale={locale} />;
 }
 
 function SurveyGate({ message }: { message: string }) {

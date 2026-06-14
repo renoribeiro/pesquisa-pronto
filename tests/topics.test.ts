@@ -5,8 +5,28 @@ import {
   dominantSentiment,
   countMatches,
   computeTrend,
+  isEmerging,
   type EmbeddedItem,
 } from "@/lib/topics";
+
+describe("isEmerging", () => {
+  it("considera emergente um tema totalmente novo com volume suficiente", () => {
+    expect(isEmerging(5, 0, 100)).toBe(true);
+  });
+  it("não considera emergente um tema novo com volume abaixo do mínimo", () => {
+    expect(isEmerging(2, 0, 100)).toBe(false);
+  });
+  it("considera emergente quando o crescimento cruza o limiar de tendência", () => {
+    expect(isEmerging(10, 4, 150)).toBe(true);
+  });
+  it("não considera emergente crescimento abaixo do limiar", () => {
+    expect(isEmerging(10, 9, 11)).toBe(false);
+  });
+  it("respeita limiares configurados", () => {
+    expect(isEmerging(4, 2, 100, { minVolume: 5, minTrend: 50 })).toBe(false);
+    expect(isEmerging(6, 3, 100, { minVolume: 5, minTrend: 50 })).toBe(true);
+  });
+});
 
 function item(id: string, embedding: number[], sentiment: EmbeddedItem["sentiment"] = "NEUTRAL"): EmbeddedItem {
   return { id, responseId: `r-${id}`, sentiment, summary: `comentário ${id}`, embedding };

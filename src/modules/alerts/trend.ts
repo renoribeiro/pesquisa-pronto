@@ -1,40 +1,23 @@
 import type { TenantClient } from "@/lib/tenant";
 import { redis } from "@/lib/redis";
+import {
+  detectNegativeTrend,
+  isLowVolume,
+  DEFAULT_MIN_PER_WEEK,
+} from "@/modules/alerts/evaluation";
+import { notifyAlert } from "@/modules/notifications/service";
 
 /**
- * Detecção de tendência negativa de NPS (AlertType.NEGATIVE_TREND).
- *
- * Compara o NPS dos últimos 7 dias com os 7 dias anteriores e dispara um
- * alerta quando há queda relevante.
+ * Detecção de tendência negativa de NPS (AlertType.NEGATIVE_TREND) e de volume
+ * baixo (AlertType.LOW_VOLUME). As regras puras vivem em `evaluation.ts`; aqui
+ * ficam as varreduras com acesso a banco/Redis.
  */
 
 const MIN_RESPONSES_PER_WINDOW = 5;
-const DEFAULT_MIN_DROP = 10;
 
-export interface TrendOptions {
-  /** Queda mínima de pontos de NPS para considerar a tendência negativa. */
-  minDrop?: number;
-}
-
-export interface TrendResult {
-  isNegative: boolean;
-  drop: number;
-}
-
-/**
- * Função pura: avalia se a variação de NPS configura tendência negativa.
- * `drop` é a queda em pontos (previousNps - currentNps). A tendência é
- * negativa quando `drop >= (opts.minDrop ?? 10)`.
- */
-export function detectNegativeTrend(
-  currentNps: number,
-  previousNps: number,
-  opts?: TrendOptions,
-): TrendResult {
-  const minDrop = opts?.minDrop ?? DEFAULT_MIN_DROP;
-  const drop = previousNps - currentNps;
-  return { isNegative: drop >= minDrop, drop };
-}
+// Reexporta as funções puras para compatibilidade dos importadores existentes.
+export { detectNegativeTrend, isLowVolume };
+export type { TrendOptions, TrendResult } from "@/modules/alerts/evaluation";
 
 interface NpsWindow {
   nps: number;
@@ -143,15 +126,87 @@ export async function checkTrendAlerts(
     });
     if (existing) return 0;
 
+    const message = `O NPS caiu ${drop} ponto${drop === 1 ? "" : "s"} na última semana (de ${previous.nps} para ${current.nps}).`;
     await db.alert.create({
       data: {
         tenantId,
         type: "NEGATIVE_TREND",
         status: "OPEN",
         title: "Tendência negativa de NPS",
-        message: `O NPS caiu ${drop} ponto${drop === 1 ? "" : "s"} na última semana (de ${previous.nps} para ${current.nps}).`,
+        message,
         metadata: { currentNps: current.nps, previousNps: previous.nps, drop },
       },
+    });
+    await notifyAlert(db, tenantId, {
+      alertType: "NEGATIVE_TREND",
+      title: "Tendência negativa de NPS",
+      body: message,
+      metadata: { currentNps: current.nps, previousNps: previous.nps, drop },
+    });
+    return 1;
+  } finally {
+    await redis.del(lockKey).catch(() => {});
+  }
+}
+
+/**
+ * Verifica volume baixo de respostas para um tenant: compara a contagem da
+ * última semana com a semana anterior e, se caiu abaixo do mínimo esperado,
+ * cria um Alert LOW_VOLUME (dedupe nas últimas 24h). Limiar configurável via
+ * AlertThreshold (config `{ minPerWeek }`); opt-out com active=false.
+ *
+ * @returns número de alertas criados (0 ou 1).
+ */
+export async function checkLowVolumeAlerts(db: TenantClient, tenantId: string): Promise<number> {
+  const now = Date.now();
+  const day = 24 * 60 * 60 * 1000;
+
+  const [current, previous] = await Promise.all([
+    db.response.count({ where: { completed: true, createdAt: { gte: new Date(now - 7 * day) } } }),
+    db.response.count({
+      where: { completed: true, createdAt: { gte: new Date(now - 14 * day), lt: new Date(now - 7 * day) } },
+    }),
+  ]);
+
+  const threshold = await db.alertThreshold.findFirst({ where: { type: "LOW_VOLUME" } });
+  if (threshold && threshold.active === false) return 0;
+
+  let minPerWeek = DEFAULT_MIN_PER_WEEK;
+  const config = threshold?.config;
+  if (config && typeof config === "object" && !Array.isArray(config)) {
+    const raw = (config as Record<string, unknown>).minPerWeek;
+    if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) minPerWeek = raw;
+  }
+
+  if (!isLowVolume(current, previous, minPerWeek)) return 0;
+
+  const lockKey = `lock:lowvolume:${tenantId}`;
+  const acquired = await redis.set(lockKey, "1", "EX", 30, "NX");
+  if (acquired !== "OK") return 0;
+
+  try {
+    const since = new Date(now - day);
+    const existing = await db.alert.findFirst({
+      where: { type: "LOW_VOLUME", createdAt: { gte: since } },
+    });
+    if (existing) return 0;
+
+    const message = `Apenas ${current} resposta${current === 1 ? "" : "s"} na última semana (semana anterior: ${previous}; mínimo esperado: ${minPerWeek}).`;
+    await db.alert.create({
+      data: {
+        tenantId,
+        type: "LOW_VOLUME",
+        status: "OPEN",
+        title: "Volume baixo de respostas",
+        message,
+        metadata: { current, previous, minPerWeek },
+      },
+    });
+    await notifyAlert(db, tenantId, {
+      alertType: "LOW_VOLUME",
+      title: "Volume baixo de respostas",
+      body: message,
+      metadata: { current, previous, minPerWeek },
     });
     return 1;
   } finally {

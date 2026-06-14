@@ -242,6 +242,51 @@ O resumo deve incluir: principais achados, pontos de atenção, tendências e su
   return textOf(message);
 }
 
+export interface ComparativePeriod {
+  nps: number;
+  total: number;
+  positive: number;
+  negative: number;
+  neutral: number;
+}
+
+/**
+ * Gera uma narrativa comparativa (2-3 parágrafos, PT-BR) entre dois períodos
+ * consecutivos — variações de NPS/volume/sentimento, possíveis sazonalidades e
+ * correlações. Recebe apenas números agregados (sem PII).
+ */
+export async function generateComparativeNarrative(
+  input: { days: number; current: ComparativePeriod; previous: ComparativePeriod },
+  usageCtx?: AiUsageCtx,
+): Promise<string> {
+  const client = getAnthropicClient();
+  const { days, current, previous } = input;
+
+  const prompt = `Você é analista de experiência do paciente da Prontoclínica de Fortaleza. Compare os DOIS períodos consecutivos de ${days} dias abaixo e escreva uma análise executiva em português (2 a 3 parágrafos).
+
+Período anterior (mais antigo):
+- NPS: ${previous.nps} | Respostas: ${previous.total}
+- Sentimento — positivo: ${previous.positive}, negativo: ${previous.negative}, neutro: ${previous.neutral}
+
+Período atual (mais recente):
+- NPS: ${current.nps} | Respostas: ${current.total}
+- Sentimento — positivo: ${current.positive}, negativo: ${current.negative}, neutro: ${current.neutral}
+
+Aborde: (1) a variação de NPS e de volume entre os períodos e o que ela sugere; (2) a mudança na distribuição de sentimento; (3) hipóteses de sazonalidade ou correlação (ex.: queda de volume acompanhando queda de NPS). Seja objetivo e baseie-se SOMENTE nos números fornecidos — não invente causas específicas. Se o volume for muito baixo para conclusões, diga isso explicitamente.`;
+
+  const message = await client.messages.create({
+    model: env.ANTHROPIC_MODEL,
+    max_tokens: 900,
+    messages: [{ role: "user", content: prompt }],
+  });
+
+  if (usageCtx) {
+    await recordAiUsage(usageCtx, env.ANTHROPIC_MODEL, message.usage.input_tokens, message.usage.output_tokens);
+  }
+
+  return textOf(message);
+}
+
 /**
  * Gera rótulos curtos (2-4 palavras, PT-BR) para clusters de temas a partir de
  * amostras de comentários de pacientes. Faz UMA única chamada ao Claude

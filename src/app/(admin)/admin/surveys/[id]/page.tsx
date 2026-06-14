@@ -6,6 +6,8 @@ import {
   type BuilderRule,
 } from "@/modules/surveys/components/survey-builder";
 import { DistributionPanel } from "@/modules/channels/components/distribution-panel";
+import { BatchReport } from "@/modules/channels/components/batch-report";
+import { listDispatchBatches } from "@/modules/channels/batch-actions";
 
 export const metadata = { title: "Editar pesquisa — Pronto Satisfação" };
 
@@ -35,10 +37,11 @@ export default async function SurveyEditPage({ params }: { params: Promise<{ id:
   });
   if (!survey) notFound();
 
-  const [sectors, touchPoints, themes] = await Promise.all([
+  const [sectors, touchPoints, themes, batches] = await Promise.all([
     db.sector.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
     db.touchPoint.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
     db.theme.findMany({ orderBy: { name: "asc" } }),
+    listDispatchBatches(id),
   ]);
 
   const questions: BuilderQuestion[] = survey.questions.map((q) => ({
@@ -93,6 +96,7 @@ export default async function SurveyEditPage({ params }: { params: Promise<{ id:
         <h2 className="text-lg font-semibold">Distribuição</h2>
         <DistributionPanel surveyId={survey.id} surveySlug={survey.slug} />
       </div>
+      <BatchReport surveyId={survey.id} initial={batches} />
     </div>
   );
 }

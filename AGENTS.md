@@ -53,6 +53,23 @@ npm run build          # build de produção
 
 ## Estado atual
 
-**Fase 0 concluída em código** (bootstrap, base multitenant, filas/worker). Os DoDs que
-exigem serviços rodando (migrations, seed, smoke test de fila) ficam pendentes até haver um
-runtime de containers na máquina (Docker/Colima ainda não instalado). Próximo: Fase 1 — Auth/RBAC.
+**Fases 0, 1, 2 e 3 implementadas em código.** Roadmap (PLANO-DESENVOLVIMENTO.md) concluído,
+incluindo a última leva:
+
+- **M2.2** Disparo em lote (CSV/Excel): upload, mapeamento de colunas, preview/validação,
+  agendamento e relatório de lotes (`channels/batch-actions.ts`, `lib/recipients.ts`).
+- **M2.3** Filtro por tema na nuvem de palavras + alerta de tema emergente (`alerts/emerging.ts`).
+- **M2.4** Alertas `LOW_VOLUME`, UI de thresholds (Configurações → Alertas) e análise
+  comparativa temporal por IA (`analytics/comparative.ts`, `generateComparativeNarrative`).
+- **M2.5** Central de notificações em tempo real: SSE (`/api/notifications/stream`), sino no
+  header, preferências por usuário, alertas geram `Notification` (`modules/notifications/`).
+- **M2.6** Widget embed: aba Embed com snippets inline/popup + loader `public/embed.js`.
+- **M3.5** i18n do formulário público (pt-BR/en/es) com seletor — ver `docs/I18N.md`
+  (admin permanece pt-BR; migração incremental).
+- **M3.4** App mobile (React Native): deferido para repo separado — ver `docs/MOBILE.md`.
+
+Os DoDs que exigem serviços rodando (migrations aplicadas, seed, smoke de fila, teste e2e de
+SSE/embed cross-origin) seguem pendentes de um runtime de containers. Validação atual:
+`typecheck`, `lint`, `build` e `vitest` (76 testes) passam. Ao subir o ambiente, aplicar a
+migration `20260614120000_notification_center` e re-rodar os scripts de RLS (`prisma/rls/`),
+que cobrem automaticamente a nova tabela `notification_preferences`.

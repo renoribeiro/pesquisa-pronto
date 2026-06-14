@@ -26,6 +26,25 @@ export async function getOrCreateLinkDistribution(surveyId: string) {
   return dist;
 }
 
+export async function getOrCreateEmbedDistribution(surveyId: string) {
+  const { ctx, db } = await requirePermission("survey:create");
+
+  const existing = await db.distribution.findFirst({
+    where: { surveyId, channel: ChannelType.EMBED },
+  });
+  if (existing) return existing;
+
+  const dist = await db.distribution.create({
+    data: {
+      tenantId: ctx.tenantId,
+      surveyId,
+      channel: ChannelType.EMBED,
+    },
+  });
+  revalidatePath(`/admin/surveys/${surveyId}`);
+  return dist;
+}
+
 const emailDispatchSchema = z.object({
   surveyId: z.string(),
   subject: z.string().min(1),

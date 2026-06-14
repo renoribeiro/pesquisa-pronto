@@ -96,8 +96,10 @@ export function enqueueEmail(payload: SendEmailJob, opts?: { jobId?: string }) {
   return getQueue(QUEUE_NAMES.email).add("send", payload, opts);
 }
 
-export function enqueueDispatch(payload: DispatchJobPayload) {
-  return getQueue(QUEUE_NAMES.dispatch).add("send", payload);
+export function enqueueDispatch(payload: DispatchJobPayload, opts?: { delay?: number }) {
+  // `delay` (ms) permite agendar o disparo (lotes com scheduledAt). Sem delay o
+  // job é processado assim que houver worker disponível.
+  return getQueue(QUEUE_NAMES.dispatch).add("send", payload, opts);
 }
 
 export function enqueueAnalyzeResponse(payload: AnalyzeResponseJob) {

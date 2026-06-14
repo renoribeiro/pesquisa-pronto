@@ -125,3 +125,29 @@ export function computeTrend(current: number, previous: number): number {
   if (previous === 0) return current > 0 ? 100 : 0;
   return Math.round(((current - previous) / previous) * 100);
 }
+
+export interface EmergingOptions {
+  /** Volume mínimo no período atual para o tema ser relevante. */
+  minVolume?: number;
+  /** Crescimento percentual mínimo vs. período anterior. */
+  minTrend?: number;
+}
+
+export const DEFAULT_EMERGING: Required<EmergingOptions> = { minVolume: 3, minTrend: 100 };
+
+/**
+ * Decide se um tema é "emergente": tem volume relevante no período atual E
+ * ou é totalmente novo (não existia antes) ou cresceu acima do limiar de
+ * tendência. Função pura — a configuração de limiares vem do AlertThreshold.
+ */
+export function isEmerging(
+  volume: number,
+  prevVolume: number,
+  trend: number,
+  opts: EmergingOptions = {},
+): boolean {
+  const minVolume = opts.minVolume ?? DEFAULT_EMERGING.minVolume;
+  const minTrend = opts.minTrend ?? DEFAULT_EMERGING.minTrend;
+  if (volume < minVolume) return false;
+  return prevVolume === 0 || trend >= minTrend;
+}

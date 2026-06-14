@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { PrismaClient, UserRole } from "@prisma/client";
+import { PrismaClient, UserRole, AlertType } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
@@ -20,6 +20,14 @@ const DEFAULT_SECTORS = [
   { slug: "cardiologia", name: "Cardiologia" },
   { slug: "clinica-geral", name: "Clínica Geral" },
   { slug: "recepcao", name: "Recepção" },
+];
+
+// Limiares de alerta padrão (configuráveis em Configurações → Alertas).
+const DEFAULT_ALERT_THRESHOLDS: { type: AlertType; config: Record<string, number> }[] = [
+  { type: AlertType.DETRACTOR, config: { below: 7 } },
+  { type: AlertType.NEGATIVE_TREND, config: { minDrop: 10 } },
+  { type: AlertType.EMERGING_THEME, config: { minVolume: 3, minTrend: 100 } },
+  { type: AlertType.LOW_VOLUME, config: { minPerWeek: 5 } },
 ];
 
 async function main() {
@@ -86,6 +94,17 @@ async function main() {
     });
   }
   console.log(`✔ ${DEFAULT_SECTORS.length} setores iniciais`);
+
+  // Limiares de alerta (idempotente por tenant+tipo). Só cria se ausente, para
+  // não sobrescrever ajustes feitos pelo admin em execuções repetidas do seed.
+  for (const t of DEFAULT_ALERT_THRESHOLDS) {
+    await prisma.alertThreshold.upsert({
+      where: { tenantId_type: { tenantId: tenant.id, type: t.type } },
+      update: {},
+      create: { tenantId: tenant.id, type: t.type, config: t.config, active: true },
+    });
+  }
+  console.log(`✔ ${DEFAULT_ALERT_THRESHOLDS.length} limiares de alerta padrão`);
 
   console.log("\n🌱 Seed concluído.");
 }

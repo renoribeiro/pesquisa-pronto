@@ -3,6 +3,7 @@ import { requireSession } from "@/lib/session";
 import { visibleNav } from "@/modules/admin/nav";
 import { Sidebar } from "@/modules/admin/components/sidebar";
 import { UserMenu } from "@/modules/admin/components/user-menu";
+import { NotificationBell } from "@/modules/notifications/components/notification-bell";
 import { ProntoclinicaLogo } from "@/components/logo";
 
 export default async function AdminLayout({ children }: { children: ReactNode }) {
@@ -27,7 +28,8 @@ export default async function AdminLayout({ children }: { children: ReactNode })
           <div className="hidden md:block">
             <span className="font-extrabold text-sm uppercase tracking-wider text-[#901A1E]">Painel Corporativo</span>
           </div>
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
+            <NotificationBell />
             <UserMenu name={ctx.name} email={ctx.email} role={ctx.role} />
           </div>
         </header>

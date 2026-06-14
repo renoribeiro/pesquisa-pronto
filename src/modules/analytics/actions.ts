@@ -3,10 +3,11 @@
 import { requirePermission, responseSectorWhere, surveySectorWhere } from "@/lib/session";
 import { getNpsSummary } from "@/modules/analytics/queries";
 import { extractTopicClusters } from "@/modules/analytics/topics";
+import { getComparativeData, type ComparativeData } from "@/modules/analytics/comparative";
 import { answerQuestion } from "@/modules/analytics/rag";
 import { getEntityInsights as queryEntityInsights } from "@/modules/analytics/entities";
 import { getAiCostSummary as queryAiCostSummary } from "@/modules/analytics/ai-cost";
-import { generateExecutiveSummary } from "@/lib/ai";
+import { generateExecutiveSummary, generateComparativeNarrative } from "@/lib/ai";
 import { revalidatePath } from "next/cache";
 import type { SessionContext } from "@/lib/session";
 import type { Scope } from "@/lib/rbac";
@@ -74,6 +75,38 @@ export async function generateTopicClusters() {
 
   revalidatePath("/admin/analytics");
   return db.topicCluster.findMany({ where: { surveyId: null }, orderBy: { volume: "desc" } });
+}
+
+/**
+ * Filtro por tema: retorna os comentários-amostra (resumos de IA) das respostas
+ * representativas de um tema. Tenant-wide (rótulos anônimos) → escopo total.
+ */
+export async function getTopicSamples(
+  topicId: string,
+): Promise<{ label: string; samples: string[] }> {
+  const { db, scope } = await requirePermission("survey:view");
+  if (scope !== "all") {
+    throw new Error("Detalhe de temas disponível apenas para administradores da clínica.");
+  }
+
+  const topic = await db.topicCluster.findFirst({
+    where: { id: topicId },
+    select: { label: true, sampleResponseIds: true },
+  });
+  if (!topic) throw new Error("Tema não encontrado.");
+
+  const ids = Array.isArray(topic.sampleResponseIds) ? (topic.sampleResponseIds as string[]) : [];
+  if (ids.length === 0) return { label: topic.label, samples: [] };
+
+  const analyses = await db.aIAnalysis.findMany({
+    where: { responseId: { in: ids } },
+    select: { summary: true },
+  });
+  const samples = analyses
+    .map((a) => a.summary)
+    .filter((s): s is string => typeof s === "string" && s.trim().length > 0);
+
+  return { label: topic.label, samples };
 }
 
 export async function generateAiSummary() {
@@ -147,6 +180,44 @@ export async function generateAiSummary() {
   revalidatePath("/admin");
   revalidatePath("/admin/analytics");
   return summary;
+}
+
+/**
+ * Análise comparativa temporal (M2.4): compara o período atual com o anterior
+ * (mesma duração) e gera uma narrativa via IA sobre variações de NPS, volume,
+ * sentimento e possíveis sazonalidades. Respeita o escopo de setor.
+ */
+export async function generateComparison(): Promise<{
+  data: ComparativeData;
+  narrative: string;
+}> {
+  const { ctx, db, scope } = await requirePermission("survey:view");
+  const sectorWhere = responseSectorWhere(ctx, scope);
+
+  const data = await getComparativeData(db, ctx.tenantId, { days: 30, sectorWhere });
+
+  const narrative = await generateComparativeNarrative(
+    {
+      days: data.days,
+      current: {
+        nps: data.current.nps,
+        total: data.current.total,
+        positive: data.current.positive,
+        negative: data.current.negative,
+        neutral: data.current.neutral,
+      },
+      previous: {
+        nps: data.previous.nps,
+        total: data.previous.total,
+        positive: data.previous.positive,
+        negative: data.previous.negative,
+        neutral: data.previous.neutral,
+      },
+    },
+    { tenantId: ctx.tenantId, jobType: "comparison" },
+  );
+
+  return { data, narrative };
 }
 
 /**

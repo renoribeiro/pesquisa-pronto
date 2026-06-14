@@ -8,6 +8,7 @@ import {
   type EmbeddedItem,
   type Sentiment,
 } from "@/lib/topics";
+import { createEmergingThemeAlerts, type EmergingThemeInput } from "@/modules/alerts/emerging";
 
 interface RawRow {
   id: string;
@@ -114,29 +115,45 @@ export async function extractTopicClusters(opts: ExtractTopicsOptions): Promise<
   );
   const labels = await labelTopicClusters(samples, { tenantId, jobType: "topics" });
 
+  // Resumo (rótulo + volume atual/anterior + tendência) usado tanto na persistência
+  // do snapshot quanto na detecção de temas emergentes após a transação.
+  const summary: EmergingThemeInput[] = clusters.map((c, i) => {
+    const volume = c.members.length;
+    const prevVolume = countMatches(c.centroid, previous);
+    return { label: labels[i], volume, prevVolume, trend: computeTrend(volume, prevVolume) };
+  });
+
   // delete + create na MESMA transação: evita janela sem temas.
   await withTenant(tenantId, async (tx) => {
     await tx.topicCluster.deleteMany({ where: deleteWhere });
     await Promise.all(
-      clusters.map((c, i) => {
-        const volume = c.members.length;
-        const prevVolume = countMatches(c.centroid, previous);
-        return tx.topicCluster.create({
+      clusters.map((c, i) =>
+        tx.topicCluster.create({
           data: {
             tenantId,
             surveyId: surveyId ?? null,
-            label: labels[i],
-            volume,
+            label: summary[i].label,
+            volume: summary[i].volume,
             sentiment: dominantSentiment(c.members),
-            trend: computeTrend(volume, prevVolume),
+            trend: summary[i].trend,
             periodStart,
             periodEnd,
             sampleResponseIds: c.members.slice(0, 5).map((m) => m.responseId),
           },
-        });
-      }),
+        }),
+      ),
     );
   });
+
+  // Alertas de tema emergente só fazem sentido no snapshot tenant-wide (rótulos
+  // anônimos agregados); snapshots por-pesquisa não disparam alerta.
+  if (!surveyId) {
+    try {
+      await createEmergingThemeAlerts(db, tenantId, summary);
+    } catch {
+      // Detecção de emergência é best-effort: nunca derruba a extração de temas.
+    }
+  }
 
   return clusters.length;
 }

@@ -177,6 +177,7 @@ model Tenant {
   reportSchedules   ReportSchedule[]
   reportRuns        ReportRun[]
   notifications     Notification[]
+  notificationPrefs NotificationPreference[]
   apiKeys           ApiKey[]
   webhookEndpoints  WebhookEndpoint[]
   webhookLogs       WebhookLog[]
@@ -232,6 +233,7 @@ model User {
   reportSchedules ReportSchedule[]
   apiKeys         ApiKey[]
   notifications   Notification[]
+  notificationPref NotificationPreference?
 
   @@unique([tenantId, email])
   @@index([tenantId])
@@ -803,7 +805,23 @@ model Notification {
   @@index([tenantId])
   @@index([userId])
   @@index([tenantId, read])
+  @@index([userId, read, archived])
   @@map("notifications")
+}
+
+model NotificationPreference {
+  id           String             @id @default(cuid())
+  tenantId     String
+  tenant       Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId       String             @unique
+  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emailEnabled Boolean            @default(false)
+  mutedTypes   NotificationType[] @default([])
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  @@index([tenantId])
+  @@map("notification_preferences")
 }
 
 // ═══════════════════════════════════════════════════════════════

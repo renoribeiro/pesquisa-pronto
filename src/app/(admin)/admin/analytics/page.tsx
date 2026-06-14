@@ -14,6 +14,7 @@ import {
   RecentResponsesFeed,
 } from "@/modules/analytics/components/analytics-dashboard";
 import { TopicClustersWidget } from "@/modules/analytics/components/topic-clusters";
+import { ComparativeInsightsWidget } from "@/modules/analytics/components/comparative-insights";
 import { AskDataWidget } from "@/modules/analytics/components/ask-data";
 import { EntityInsightsWidget } from "@/modules/analytics/components/entity-insights";
 import { AiCostWidget } from "@/modules/analytics/components/ai-cost";
@@ -80,6 +81,9 @@ export default async function AnalyticsPage() {
 
       {/* Temas recorrentes (clustering por IA dos embeddings) — agregado tenant-wide */}
       {showTenantAggregates && <TopicClustersWidget initialClusters={topicViews} />}
+
+      {/* Análise comparativa temporal (período atual vs anterior) com narrativa por IA */}
+      <ComparativeInsightsWidget />
 
       {/* Pergunte aos seus dados (RAG) */}
       <AskDataWidget />

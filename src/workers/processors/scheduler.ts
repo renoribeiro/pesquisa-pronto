@@ -1,7 +1,7 @@
 import type { Job } from "bullmq";
 import { prisma } from "@/lib/prisma";
 import { forTenant } from "@/lib/tenant";
-import { checkTrendAlerts } from "@/modules/alerts/trend";
+import { checkTrendAlerts, checkLowVolumeAlerts } from "@/modules/alerts/trend";
 import { anonymizeExpiredResponses } from "@/modules/lgpd/retention";
 import { logger } from "@/lib/logger";
 
@@ -23,19 +23,22 @@ export async function processScheduler(job: Job): Promise<unknown> {
   }
 }
 
-/** Varredura de tendência negativa de NPS por tenant ativo. */
+/** Varredura de alertas preditivos (tendência negativa + volume baixo) por tenant ativo. */
 async function runTrendSweep(job: Job): Promise<unknown> {
   const tenants = await prisma.tenant.findMany({ where: { active: true }, select: { id: true } });
   let alertsCreated = 0;
 
   for (const t of tenants) {
+    const db = forTenant(t.id);
     try {
-      alertsCreated += await checkTrendAlerts(forTenant(t.id), t.id);
+      alertsCreated += await checkTrendAlerts(db, t.id);
     } catch (err) {
-      logger.error(
-        `[worker:scheduler] ${job.name} — falha ao checar alertas do tenant ${t.id}:`,
-        err,
-      );
+      logger.error(`[worker:scheduler] ${job.name} — falha no trend do tenant ${t.id}:`, err);
+    }
+    try {
+      alertsCreated += await checkLowVolumeAlerts(db, t.id);
+    } catch (err) {
+      logger.error(`[worker:scheduler] ${job.name} — falha no low-volume do tenant ${t.id}:`, err);
     }
   }
 

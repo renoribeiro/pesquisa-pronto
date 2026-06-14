@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
-import { Tags, RefreshCw, TrendingUp, TrendingDown, Minus } from "lucide-react";
+import { useState, useTransition } from "react";
+import { Tags, RefreshCw, TrendingUp, TrendingDown, Minus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { generateTopicClusters } from "../actions";
+import { generateTopicClusters, getTopicSamples } from "../actions";
 
 type Sentiment = "POSITIVE" | "NEUTRAL" | "NEGATIVE";
 
@@ -52,11 +52,37 @@ export function TopicClustersWidget({ initialClusters }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Filtro por tema: tema selecionado + comentários-amostra carregados sob demanda.
+  const [selected, setSelected] = useState<TopicClusterView | null>(null);
+  const [samples, setSamples] = useState<string[] | null>(null);
+  const [loadingSamples, startSamples] = useTransition();
+
   const maxVolume = clusters.reduce((m, c) => Math.max(m, c.volume), 1);
+
+  function selectTopic(c: TopicClusterView) {
+    // Clicar no tema já selecionado limpa o filtro.
+    if (selected?.id === c.id) {
+      setSelected(null);
+      setSamples(null);
+      return;
+    }
+    setSelected(c);
+    setSamples(null);
+    startSamples(async () => {
+      try {
+        const result = await getTopicSamples(c.id);
+        setSamples(result.samples);
+      } catch {
+        setSamples([]);
+      }
+    });
+  }
 
   async function handleGenerate() {
     setLoading(true);
     setError(null);
+    setSelected(null);
+    setSamples(null);
     try {
       const result = await generateTopicClusters();
       setClusters(
@@ -119,24 +145,36 @@ export function TopicClustersWidget({ initialClusters }: Props) {
           <p className="text-sm text-[#901A1E] font-semibold py-2">{error}</p>
         ) : clusters.length > 0 ? (
           <>
-            {/* Nuvem de palavras */}
+            {/* Nuvem de palavras (clique para filtrar por tema) */}
             <div className="flex flex-wrap items-center gap-x-5 gap-y-2 leading-tight">
               {clusters.map((c) => (
-                <span
+                <button
                   key={c.id}
-                  className="font-extrabold transition-transform hover:scale-105 cursor-default"
+                  type="button"
+                  onClick={() => selectTopic(c)}
+                  className={`font-extrabold transition-transform hover:scale-105 cursor-pointer ${
+                    selected && selected.id !== c.id ? "opacity-30" : ""
+                  }`}
                   style={{ fontSize: fontSize(c.volume), color: SENTIMENT_COLOR[c.sentiment] }}
                   title={`${c.volume} menção(ões) · ${c.sentiment}`}
+                  aria-pressed={selected?.id === c.id}
                 >
                   {c.label}
-                </span>
+                </button>
               ))}
             </div>
 
-            {/* Lista detalhada */}
+            {/* Lista detalhada (clicável) */}
             <div className="mt-6 space-y-2 border-t border-[#a8a0a0]/20 pt-4">
               {clusters.map((c) => (
-                <div key={`row-${c.id}`} className="flex items-center justify-between gap-4 text-sm">
+                <button
+                  key={`row-${c.id}`}
+                  type="button"
+                  onClick={() => selectTopic(c)}
+                  className={`flex w-full items-center justify-between gap-4 rounded-lg px-2 py-1 text-sm transition-colors hover:bg-[#E0DADA]/40 ${
+                    selected?.id === c.id ? "bg-[#E0DADA]/60" : ""
+                  }`}
+                >
                   <span className="flex items-center gap-2 font-bold text-[#3A3333]">
                     <span
                       className="h-2.5 w-2.5 rounded-full shrink-0"
@@ -148,9 +186,53 @@ export function TopicClustersWidget({ initialClusters }: Props) {
                     <span>{c.volume} menç.</span>
                     <TrendBadge trend={c.trend} />
                   </span>
-                </div>
+                </button>
               ))}
             </div>
+
+            {/* Painel do tema selecionado: comentários-amostra */}
+            {selected && (
+              <div className="mt-6 rounded-2xl border-0 bg-background p-5 shadow-neumorphic-inset">
+                <div className="flex items-center justify-between gap-4">
+                  <h3 className="flex items-center gap-2 font-extrabold text-[#901A1E]">
+                    <span
+                      className="h-2.5 w-2.5 rounded-full shrink-0"
+                      style={{ backgroundColor: SENTIMENT_COLOR[selected.sentiment] }}
+                    />
+                    {selected.label}
+                    <span className="text-xs font-semibold text-[#6E6565]">
+                      · {selected.volume} menç. · <TrendBadge trend={selected.trend} />
+                    </span>
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => selectTopic(selected)}
+                    className="text-[#6E6565] hover:text-[#901A1E]"
+                    title="Limpar filtro"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {loadingSamples ? (
+                    <p className="text-sm font-semibold text-[#6E6565]">Carregando comentários…</p>
+                  ) : samples && samples.length > 0 ? (
+                    samples.map((s, i) => (
+                      <p
+                        key={i}
+                        className="border-l-2 border-[#C5A059] pl-3 text-sm text-[#3A3333] italic"
+                      >
+                        “{s}”
+                      </p>
+                    ))
+                  ) : (
+                    <p className="text-sm font-semibold text-[#6E6565]">
+                      Sem comentários-amostra disponíveis para este tema.
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
           </>
         ) : (
           <div className="flex flex-col items-center justify-center py-6 text-center">

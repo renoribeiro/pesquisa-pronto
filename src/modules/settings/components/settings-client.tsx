@@ -17,6 +17,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import {
+  AlertThresholdsManager,
+  type ThresholdData,
+} from "@/modules/settings/components/alert-thresholds";
 
 interface Clinic {
   name: string;
@@ -39,10 +43,12 @@ export function SettingsClient({
   clinic,
   sectors,
   touchPoints,
+  thresholds,
 }: {
   clinic: Clinic;
   sectors: Item[];
   touchPoints: Item[];
+  thresholds: ThresholdData[];
 }) {
   const [pending, start] = useTransition();
 
@@ -80,6 +86,7 @@ export function SettingsClient({
         <TabsTrigger value="general">Geral</TabsTrigger>
         <TabsTrigger value="sectors">Setores</TabsTrigger>
         <TabsTrigger value="touchpoints">Pontos de Contato</TabsTrigger>
+        <TabsTrigger value="alerts">Alertas</TabsTrigger>
         <TabsTrigger value="privacy">LGPD</TabsTrigger>
       </TabsList>
 
@@ -146,6 +153,10 @@ export function SettingsClient({
           onCreate={(name, icon) => createTouchPoint({ name, icon })}
           onToggle={(id, active) => toggleTouchPoint(id, active)}
         />
+      </TabsContent>
+
+      <TabsContent value="alerts">
+        <AlertThresholdsManager initial={thresholds} />
       </TabsContent>
 
       <TabsContent value="privacy">

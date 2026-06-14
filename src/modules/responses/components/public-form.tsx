@@ -9,6 +9,14 @@ import { themeToStyleString, type ThemeConfig } from "@/modules/themes/theme-con
 import { sanitizeCustomCss } from "@/lib/sanitize-css";
 import { Button } from "@/components/ui/button";
 import { ProntoclinicaLogo } from "@/components/logo";
+import { LocaleSwitcher } from "@/components/locale-switcher";
+import {
+  getDictionary,
+  interpolate,
+  DEFAULT_LOCALE,
+  type Locale,
+  type FormDictionary,
+} from "@/lib/i18n";
 
 /**
  * Valida uma URL de redirecionamento ("obrigado"). Aceita apenas http(s)
@@ -102,14 +110,22 @@ function ProgressBar({ value }: { value: number }) {
 
 // ── Thank-you screen ──────────────────────────────────────────
 
-function ThankYou({ message, redirectUrl }: { message: string | null; redirectUrl: string | null }) {
+function ThankYou({
+  message,
+  redirectUrl,
+  t,
+}: {
+  message: string | null;
+  redirectUrl: string | null;
+  t: FormDictionary;
+}) {
   const safeUrl = safeRedirectUrl(redirectUrl);
   useEffect(() => {
     if (safeUrl) {
-      const t = setTimeout(() => {
+      const timer = setTimeout(() => {
         window.location.href = safeUrl;
       }, 3000);
-      return () => clearTimeout(t);
+      return () => clearTimeout(timer);
     }
   }, [safeUrl]);
 
@@ -120,20 +136,23 @@ function ThankYou({ message, redirectUrl }: { message: string | null; redirectUr
           <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
         </svg>
       </div>
-      <h2 className="text-2xl font-bold text-[#3A3333]">Obrigado!</h2>
-      <p className="text-[#6E6565] font-medium max-w-md">
-        {message ?? "Sua resposta foi registrada com sucesso."}
-      </p>
-      {safeUrl && (
-        <p className="text-xs text-[#a8a0a0] font-medium">Redirecionando em alguns segundos...</p>
-      )}
+      <h2 className="text-2xl font-bold text-[#3A3333]">{t.thankYouTitle}</h2>
+      <p className="text-[#6E6565] font-medium max-w-md">{message ?? t.thankYouDefault}</p>
+      {safeUrl && <p className="text-xs text-[#a8a0a0] font-medium">{t.redirecting}</p>}
     </div>
   );
 }
 
 // ── Main component ────────────────────────────────────────────
 
-export function PublicForm({ survey }: { survey: PublicSurvey }) {
+export function PublicForm({
+  survey,
+  locale = DEFAULT_LOCALE,
+}: {
+  survey: PublicSurvey;
+  locale?: Locale;
+}) {
+  const t = getDictionary(locale).form;
   const [startedAt] = useState(() => Date.now());
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [page, setPage] = useState(0);
@@ -179,13 +198,13 @@ export function PublicForm({ survey }: { survey: PublicSurvey }) {
 
   const nextPage = useCallback(() => {
     if (!currentPageValid()) {
-      setError("Por favor, responda todas as perguntas obrigatórias.");
+      setError(t.requiredFields);
       return;
     }
     setError(null);
     setPage((p) => Math.min(p + 1, totalPages - 1));
     window.scrollTo({ top: 0, behavior: "smooth" });
-  }, [currentPageValid, totalPages]);
+  }, [currentPageValid, totalPages, t.requiredFields]);
 
   const prevPage = useCallback(() => {
     setError(null);
@@ -316,12 +335,12 @@ export function PublicForm({ survey }: { survey: PublicSurvey }) {
     if (honeypot) return;
 
     if (!currentPageValid()) {
-      setError("Por favor, responda todas as perguntas obrigatórias.");
+      setError(t.requiredFields);
       return;
     }
 
     if (survey.privacyPolicy && !consentGiven) {
-      setError("Você precisa aceitar a política de privacidade para continuar.");
+      setError(t.privacyRequired);
       return;
     }
 
@@ -363,7 +382,7 @@ export function PublicForm({ survey }: { survey: PublicSurvey }) {
   if (submitted) {
     return (
       <SurveyWrapper themeStyle={themeStyle} customCss={survey.themeConfig?.customCss ?? null}>
-        <ThankYou message={survey.thankYouMessage} redirectUrl={survey.redirectUrl} />
+        <ThankYou message={survey.thankYouMessage} redirectUrl={survey.redirectUrl} t={t} />
       </SurveyWrapper>
     );
   }
@@ -381,6 +400,11 @@ export function PublicForm({ survey }: { survey: PublicSurvey }) {
           onChange={(e) => setHoneypot(e.target.value)}
           style={{ position: "absolute", left: "-9999px", opacity: 0, height: 0, width: 0 }}
         />
+
+        {/* Seletor de idioma */}
+        <div className="mb-2 flex justify-end">
+          <LocaleSwitcher current={locale} />
+        </div>
 
         {/* Logo */}
         <div className="flex justify-center mb-8">
@@ -446,7 +470,7 @@ export function PublicForm({ survey }: { survey: PublicSurvey }) {
               disabled={submitting}
               className="bg-background hover:bg-[#E0DADA] text-[#3A3333] shadow-neumorphic hover:shadow-neumorphic-hover active:shadow-neumorphic-inset border-0 rounded-2xl h-11 px-6 font-bold transition-all duration-300 active:translate-y-[0.5px] disabled:opacity-50 disabled:pointer-events-none"
             >
-               Anterior
+              {t.previous}
             </Button>
           ) : (
             <span />
@@ -458,7 +482,7 @@ export function PublicForm({ survey }: { survey: PublicSurvey }) {
               disabled={submitting}
               className="bg-[#901A1E] hover:bg-[#a12428] text-white shadow-neumorphic hover:shadow-neumorphic-hover active:shadow-neumorphic-inset border-0 rounded-2xl h-11 px-6 font-bold transition-all duration-300 active:translate-y-[0.5px] disabled:opacity-50 disabled:pointer-events-none"
             >
-              {submitting ? "Enviando..." : "Enviar respostas"}
+              {submitting ? t.submitting : t.submit}
             </Button>
           ) : (
             <Button 
@@ -467,7 +491,7 @@ export function PublicForm({ survey }: { survey: PublicSurvey }) {
               disabled={submitting}
               className="bg-[#901A1E] hover:bg-[#a12428] text-white shadow-neumorphic hover:shadow-neumorphic-hover active:shadow-neumorphic-inset border-0 rounded-2xl h-11 px-6 font-bold transition-all duration-300 active:translate-y-[0.5px] disabled:opacity-50 disabled:pointer-events-none"
             >
-              Próxima
+              {t.next}
             </Button>
           )}
         </div>
@@ -476,18 +500,18 @@ export function PublicForm({ survey }: { survey: PublicSurvey }) {
         {!isOnePage && totalPages > 1 && (
           <div className="mt-8 flex flex-col items-center gap-3 border-t pt-6 border-[#a8a0a0]/20">
             <p className="text-xs font-semibold text-[#6E6565]">
-              Pergunta {page + 1} de {totalPages}
+              {interpolate(t.questionProgress, { current: page + 1, total: totalPages })}
             </p>
             <div className="flex items-center gap-2 text-[10px] text-[#a8a0a0] font-medium">
-              <span>Atalhos:</span>
+              <span>{t.shortcutsLabel}</span>
               <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded-md shadow-neumorphic-inset bg-background px-1.5 font-mono text-[9px] font-bold text-[#6E6565] border-0">
                 [A-Z]
               </kbd>
-              <span>Selecionar</span>
+              <span>{t.shortcutSelect}</span>
               <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded-md shadow-neumorphic-inset bg-background px-1.5 font-mono text-[9px] font-bold text-[#6E6565] border-0">
                 Enter ↵
               </kbd>
-              <span>Avançar</span>
+              <span>{t.shortcutAdvance}</span>
             </div>
           </div>
         )}
@@ -497,7 +521,7 @@ export function PublicForm({ survey }: { survey: PublicSurvey }) {
           <svg className="h-3.5 w-3.5 text-[#C5A059] shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
           </svg>
-          <span>Respostas protegidas por criptografia SSL segura</span>
+          <span>{t.sslProtected}</span>
         </div>
       </form>
     </SurveyWrapper>

@@ -1,16 +1,18 @@
 import { requirePermission } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { SettingsClient } from "@/modules/settings/components/settings-client";
+import { getAlertThresholds } from "@/modules/alerts/actions";
 
 export const metadata = { title: "Configurações — Pronto Satisfação" };
 
 export default async function SettingsPage() {
   const { ctx, db } = await requirePermission("system:configure");
 
-  const [tenant, sectors, touchPoints] = await Promise.all([
+  const [tenant, sectors, touchPoints, thresholds] = await Promise.all([
     prisma.tenant.findUnique({ where: { id: ctx.tenantId } }),
     db.sector.findMany({ orderBy: { name: "asc" } }),
     db.touchPoint.findMany({ orderBy: { name: "asc" } }),
+    getAlertThresholds(),
   ]);
 
   if (!tenant) return null;
@@ -36,6 +38,7 @@ export default async function SettingsPage() {
           active: t.active,
           icon: t.icon,
         }))}
+        thresholds={thresholds.map((t) => ({ type: t.type, active: t.active, config: t.config }))}
       />
     </div>
   );
