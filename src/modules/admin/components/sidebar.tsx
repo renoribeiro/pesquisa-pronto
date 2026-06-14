@@ -15,6 +15,7 @@ import {
   ShieldCheck,
   ShieldAlert,
   ScrollText,
+  ListChecks,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -33,6 +34,7 @@ const ICONS: Record<string, LucideIcon> = {
   ShieldCheck,
   ShieldAlert,
   ScrollText,
+  ListChecks,
 };
 
 export function Sidebar({ items }: { items: Pick<NavItem, "href" | "label" | "icon">[] }) {

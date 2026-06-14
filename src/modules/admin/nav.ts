@@ -72,6 +72,12 @@ export const NAV_ITEMS: NavItem[] = [
     visible: (r) => can(r, "survey:view"),
   },
   {
+    href: "/admin/jobs",
+    label: "Jobs & Filas",
+    icon: "ListChecks",
+    visible: (r) => r === "SUPER_ADMIN",
+  },
+  {
     href: "/admin/super",
     label: "Super Admin",
     icon: "ShieldCheck",

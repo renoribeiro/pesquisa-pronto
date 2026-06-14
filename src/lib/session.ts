@@ -63,3 +63,16 @@ export async function requireTenantDb() {
   const ctx = await requireSession();
   return { ctx, db: forTenant(ctx.tenantId) };
 }
+
+/**
+ * Exige Super Admin. Para recursos de PLATAFORMA/operação que cruzam tenants
+ * (ex.: filas/jobs do BullMQ, que são globais) e não devem ser expostos a
+ * administradores de uma única clínica.
+ */
+export async function requireSuperAdmin(): Promise<SessionContext> {
+  const ctx = await requireSession();
+  if (ctx.role !== "SUPER_ADMIN") {
+    throw new Error("Permissão negada: requer Super Admin.");
+  }
+  return ctx;
+}
