@@ -1,10 +1,12 @@
 import type { Job } from "bullmq";
 import { env } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
+import { forTenant } from "@/lib/tenant";
 import { getWhatsAppProvider } from "@/lib/channels/whatsapp";
 import { getSmsProvider } from "@/lib/channels/sms";
 import { enqueueEmail } from "@/server/queues";
 import type { DispatchJobPayload } from "@/server/queues";
+import { notifyManagers } from "@/modules/notifications/service";
 import { escapeHtml, safeHref } from "@/lib/html";
 import { logger } from "@/lib/logger";
 
@@ -124,10 +126,21 @@ async function sendDispatchJob(
         where: { id: dispatchJobId },
         data: { status: "FAILED", error },
       });
-      await prisma.dispatchBatch.update({
+      const updatedBatch = await prisma.dispatchBatch.update({
         where: { id: dispatchJob.batchId },
         data: { failed: { increment: 1 } },
       });
+      // Notifica a gestão apenas na PRIMEIRA falha do lote (failed → 1), evitando
+      // uma enxurrada de notificações em lotes grandes. O increment atômico do
+      // Postgres garante que exatamente um worker observe failed === 1.
+      if (updatedBatch.failed === 1) {
+        await notifyManagers(forTenant(tenantId), tenantId, {
+          type: "DISPATCH_ERROR",
+          title: "Falha no disparo de pesquisa",
+          body: `Um disparo (${dispatchJob.channel}) da pesquisa "${survey.title}" falhou: ${error}`,
+          metadata: { batchId: dispatchJob.batchId, channel: dispatchJob.channel },
+        });
+      }
     } else {
       // Tentativas intermediárias: deixa PENDING para reprocessar; registra o
       // último erro mas NÃO incrementa batch.failed (evita contagem inflada).

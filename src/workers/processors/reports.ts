@@ -3,6 +3,8 @@ import ExcelJS from "exceljs";
 import { forTenant } from "@/lib/tenant";
 import { putObject, getObjectUrl } from "@/lib/storage";
 import { logger } from "@/lib/logger";
+import { getComparativeData } from "@/modules/analytics/comparative";
+import { notifyManagers, notifyUser } from "@/modules/notifications/service";
 import type { GenerateReportJob } from "@/server/queues";
 
 export async function processReport(job: Job): Promise<unknown> {
@@ -52,6 +54,19 @@ async function generateReport({ reportId, tenantId }: GenerateReportJob) {
       },
     });
 
+    // Notifica que o relatório está pronto: o autor, se conhecido; senão a gestão.
+    const notif = {
+      type: "REPORT_SENT" as const,
+      title: "Relatório pronto",
+      body: `Seu relatório (${report.type}) foi gerado e está disponível para download.`,
+      metadata: { reportId, type: report.type, format: report.format },
+    };
+    if (report.generatedById) {
+      await notifyUser(db, tenantId, report.generatedById, notif);
+    } else {
+      await notifyManagers(db, tenantId, notif);
+    }
+
     logger.info(`[worker:reports] relatório ${reportId} gerado: ${fileUrl}`);
     return { reportId, fileUrl };
   } catch (err) {
@@ -78,6 +93,40 @@ async function generateExcelReport(
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Pronto Satisfação";
   workbook.created = new Date();
+
+  // Relatório comparativo: planilha própria (período atual vs anterior).
+  if (type === "PERIOD_COMPARISON") {
+    const data = await getComparativeData(db, tenantId, { days: 30, sectorWhere });
+    const cmp = workbook.addWorksheet("Comparativo");
+    cmp.columns = [
+      { header: "Métrica", key: "metric", width: 28 },
+      { header: "Período anterior", key: "prev", width: 18 },
+      { header: "Período atual", key: "cur", width: 18 },
+      { header: "Variação", key: "delta", width: 14 },
+    ];
+    const rowsCmp: [string, number, number][] = [
+      ["NPS", data.previous.nps, data.current.nps],
+      ["Respostas", data.previous.total, data.current.total],
+      ["Sentimento positivo", data.previous.positive, data.current.positive],
+      ["Sentimento negativo", data.previous.negative, data.current.negative],
+      ["Sentimento neutro", data.previous.neutral, data.current.neutral],
+    ];
+    for (const [metric, prev, cur] of rowsCmp) {
+      const delta = cur - prev;
+      cmp.addRow({ metric, prev, cur, delta: `${delta > 0 ? "+" : ""}${delta}` });
+    }
+    cmp.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
+    cmp.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF6366F1" } };
+
+    const cmpBuffer = await workbook.xlsx.writeBuffer();
+    const cmpKey = `reports/${tenantId}/${reportId}.xlsx`;
+    await putObject(
+      cmpKey,
+      Buffer.from(cmpBuffer),
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+    return getObjectUrl(cmpKey, 7 * 24 * 3600);
+  }
 
   const sheet = workbook.addWorksheet("Respostas");
 
@@ -174,8 +223,27 @@ async function generateTextReport(
   type: string,
   sectorWhere: Record<string, unknown> = {},
 ): Promise<string> {
-  const count = await db.response.count({ where: { completed: true, ...sectorWhere } });
-  const content = `RELATÓRIO ${type}\nGerado em: ${new Date().toISOString()}\nTotal de respostas: ${count}\n`;
+  let content: string;
+
+  if (type === "PERIOD_COMPARISON") {
+    const data = await getComparativeData(db, tenantId, { days: 30, sectorWhere });
+    const line = (label: string, prev: number, cur: number) => {
+      const delta = cur - prev;
+      return `${label}: ${prev} → ${cur} (${delta > 0 ? "+" : ""}${delta})`;
+    };
+    content =
+      `RELATÓRIO COMPARATIVO (últimos ${data.days} dias vs. anteriores)\n` +
+      `Gerado em: ${new Date().toISOString()}\n\n` +
+      `${line("NPS", data.previous.nps, data.current.nps)}\n` +
+      `${line("Respostas", data.previous.total, data.current.total)}\n` +
+      `${line("Sentimento positivo", data.previous.positive, data.current.positive)}\n` +
+      `${line("Sentimento negativo", data.previous.negative, data.current.negative)}\n` +
+      `${line("Sentimento neutro", data.previous.neutral, data.current.neutral)}\n`;
+  } else {
+    const count = await db.response.count({ where: { completed: true, ...sectorWhere } });
+    content = `RELATÓRIO ${type}\nGerado em: ${new Date().toISOString()}\nTotal de respostas: ${count}\n`;
+  }
+
   const key = `reports/${tenantId}/${reportId}.txt`;
   await putObject(key, Buffer.from(content, "utf-8"), "text/plain");
   return getObjectUrl(key, 7 * 24 * 3600);

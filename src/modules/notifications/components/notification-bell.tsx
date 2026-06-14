@@ -1,7 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Bell, Check, X, Settings2, AlertTriangle, TrendingDown } from "lucide-react";
+import {
+  Bell,
+  Check,
+  X,
+  Settings2,
+  AlertTriangle,
+  TrendingDown,
+  FileText,
+  Send,
+} from "lucide-react";
 import {
   getNotifications,
   getUnreadCount,
@@ -16,12 +25,18 @@ import {
 const TYPE_ICON: Record<string, typeof Bell> = {
   NEW_DETRACTOR: AlertTriangle,
   TREND_ALERT: TrendingDown,
+  WEEKLY_SUMMARY: FileText,
+  REPORT_SENT: FileText,
+  DISPATCH_ERROR: Send,
 };
 
-// Tipos de alerta que o usuário pode silenciar a partir do sino.
+// Tipos que o usuário pode silenciar a partir do sino.
 const MUTABLE = [
   { type: "NEW_DETRACTOR", label: "Detratores" },
   { type: "TREND_ALERT", label: "Tendências e temas" },
+  { type: "WEEKLY_SUMMARY", label: "Resumos semanais" },
+  { type: "REPORT_SENT", label: "Relatórios" },
+  { type: "DISPATCH_ERROR", label: "Falhas de disparo" },
 ] as const;
 
 function timeAgo(iso: string): string {

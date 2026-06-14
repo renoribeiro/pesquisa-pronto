@@ -5,6 +5,7 @@ import { captureException, captureMessage } from "@/lib/observability";
 import { analyzeSentiment, generateExecutiveSummary, generateEmbedding } from "@/lib/ai";
 import { getNpsSummary } from "@/modules/analytics/queries";
 import { extractTopicClusters } from "@/modules/analytics/topics";
+import { notifyManagers } from "@/modules/notifications/service";
 import type { AnalyzeResponseJob, GenerateSummaryJob, ExtractTopicsJob } from "@/server/queues";
 
 export async function processAi(job: Job): Promise<unknown> {
@@ -152,6 +153,13 @@ async function generateSummary({ tenantId, periodStart, periodEnd, generatedBy }
         npsAvg: nps.score,
         generatedBy: generatedBy ?? "auto",
       },
+    });
+
+    await notifyManagers(db, tenantId, {
+      type: "WEEKLY_SUMMARY",
+      title: "Novo resumo executivo disponível",
+      body: `Resumo do período gerado (NPS ${nps.score}, ${nps.total} respostas). Veja em Analytics.`,
+      metadata: { npsAvg: nps.score, total: nps.total },
     });
 
     logger.info(`[worker:ai] resumo executivo gerado para ${tenantId}`);
