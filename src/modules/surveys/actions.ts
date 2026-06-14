@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { QuestionType, SurveyStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { withTenant } from "@/lib/tenant";
 import { requirePermission } from "@/lib/session";
 import { audit } from "@/lib/audit";
 import { slugify } from "@/lib/slug";
@@ -141,7 +142,7 @@ export async function saveSurvey(surveyId: string, input: unknown) {
     }
   }
 
-  await db.$transaction(async (tx) => {
+  await withTenant(ctx.tenantId, async (tx) => {
     await tx.survey.update({
       where: { id: surveyId },
       data: {

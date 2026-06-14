@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { UserRole, Prisma } from "@prisma/client";
 import { env } from "@/lib/env";
+import { withTenant } from "@/lib/tenant";
 import { requirePermission } from "@/lib/session";
 import { hashPassword } from "@/lib/password";
 import { generateToken, hashToken } from "@/lib/tokens";
@@ -38,23 +39,22 @@ async function assertSectorsBelongToTenant(
   }
 }
 
-/** Tipo do cliente Prisma isolado por tenant retornado por requirePermission. */
-type Db = Awaited<ReturnType<typeof requirePermission>>["db"];
-
 /**
  * Aplica `update` ao usuário e RE-VERIFICA, dentro da MESMA transação
- * Serializable, que ainda resta ≥ 1 administrador privilegiado ativo. Se a
- * operação deixaria o tenant sem admin, lança e a transação é revertida.
+ * Serializable escopada por tenant (com RLS quando ativo), que ainda resta ≥ 1
+ * administrador privilegiado ativo. Se a operação deixaria o tenant sem admin,
+ * lança e a transação é revertida.
  *
  * O re-check pós-escrita + isolamento Serializable fecha o TOCTOU em que duas
  * desativações/rebaixamentos concorrentes leem a contagem antiga e ambos passam.
  */
 async function updateUserEnsuringAdminRemains(
-  db: Db,
-  args: Parameters<Db["user"]["update"]>[0],
+  tenantId: string,
+  args: Prisma.UserUpdateArgs,
   message: string,
 ): Promise<void> {
-  await db.$transaction(
+  await withTenant(
+    tenantId,
     async (tx) => {
       await tx.user.update(args);
       const remaining = await tx.user.count({
@@ -153,7 +153,7 @@ export async function toggleUser(id: string, active: boolean) {
     // Desativar: bumpa tokenVersion (logout forçado) e garante atomicamente que
     // não fica sem administrador (TOCTOU-safe).
     await updateUserEnsuringAdminRemains(
-      db,
+      ctx.tenantId,
       { where: { id }, data: { active, tokenVersion: { increment: 1 } } },
       "Não é possível desativar o último administrador ativo da clínica.",
     );
@@ -207,7 +207,7 @@ export async function updateUserRole(input: unknown) {
   await assertSectorsBelongToTenant(db, data.sectorIds);
 
   // Bumpa o tokenVersion: mudar papel/setores revalida (invalida) sessões do usuário.
-  const updateArgs = {
+  const updateArgs: Prisma.UserUpdateArgs = {
     where: { id: data.id },
     data: {
       role: data.role,
@@ -220,7 +220,7 @@ export async function updateUserRole(input: unknown) {
   if (demotingFromAdmin) {
     // Rebaixamento reduz admins — re-checa atomicamente (TOCTOU-safe).
     await updateUserEnsuringAdminRemains(
-      db,
+      ctx.tenantId,
       updateArgs,
       "Não é possível rebaixar o último administrador ativo da clínica.",
     );

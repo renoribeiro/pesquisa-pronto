@@ -1,4 +1,4 @@
-import type { TenantClient } from "@/lib/tenant";
+import { withTenant, type TenantClient } from "@/lib/tenant";
 import { labelTopicClusters } from "@/lib/ai";
 import {
   clusterByThreshold,
@@ -115,7 +115,7 @@ export async function extractTopicClusters(opts: ExtractTopicsOptions): Promise<
   const labels = await labelTopicClusters(samples, { tenantId, jobType: "topics" });
 
   // delete + create na MESMA transação: evita janela sem temas.
-  await db.$transaction(async (tx) => {
+  await withTenant(tenantId, async (tx) => {
     await tx.topicCluster.deleteMany({ where: deleteWhere });
     await Promise.all(
       clusters.map((c, i) => {

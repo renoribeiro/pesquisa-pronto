@@ -5,7 +5,7 @@ import { headers } from "next/headers";
 import { z } from "zod";
 import { SurveyStatus, ChannelType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { forTenant } from "@/lib/tenant";
+import { forTenant, setTenantGuc } from "@/lib/tenant";
 import { parseUserAgent } from "@/lib/user-agent";
 import { enqueueAnalyzeResponse } from "@/server/queues";
 import { checkAlerts } from "@/modules/alerts/actions";
@@ -156,6 +156,8 @@ export async function submitResponse(input: unknown): Promise<SubmitResult> {
   let response;
   try {
     response = await prisma.$transaction(async (tx) => {
+      // Contexto RLS (quando ativo) para o fluxo público de submissão.
+      await setTenantGuc(tx, tenantId);
       // Checagem de limite DENTRO da transação (evita TOCTOU race).
       if (survey.responseLimit) {
         const count = await tx.response.count({

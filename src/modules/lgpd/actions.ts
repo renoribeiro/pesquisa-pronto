@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { withTenant } from "@/lib/tenant";
 import { requirePermission } from "@/lib/session";
 import { audit } from "@/lib/audit";
 import { anonymizeExpiredResponses } from "./retention";
@@ -139,7 +140,7 @@ export async function deletePatientData(email: string): Promise<{ recipients: nu
   const responseIds = responses.map((r) => r.id);
 
   // Tudo numa transação: exclusão parcial não deve deixar dados inconsistentes.
-  const { responsesCount, recipientsCount } = await db.$transaction(async (tx) => {
+  const { responsesCount, recipientsCount } = await withTenant(ctx.tenantId, async (tx) => {
     if (responseIds.length > 0) {
       // 1) Limpa PII derivada nas análises de IA: resumo/emoções/entidades E o
       //    embedding (vetor é representação reversível-por-similaridade do texto

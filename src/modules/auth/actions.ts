@@ -2,6 +2,7 @@
  
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
+import { setTenantGuc } from "@/lib/tenant";
 import { env } from "@/lib/env";
 import { hashPassword } from "@/lib/password";
 import { generateToken, hashToken } from "@/lib/tokens";
@@ -117,6 +118,8 @@ export async function resetPassword(input: {
   // troca a senha — a outra recebe count 0 e é rejeitada. Evita TOCTOU de
   // duplo-uso do token de reset.
   const claimed = await prisma.$transaction(async (tx) => {
+    // Contexto RLS (quando ativo): o reset opera sobre dados do tenant do token.
+    await setTenantGuc(tx, record.tenantId);
     const claim = await tx.passwordReset.updateMany({
       where: { id: record.id, usedAt: null, expiresAt: { gt: new Date() } },
       data: { usedAt: new Date() },

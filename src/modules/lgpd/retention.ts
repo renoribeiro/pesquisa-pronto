@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import type { TenantClient } from "@/lib/tenant";
+import { withTenant, type TenantClient } from "@/lib/tenant";
 
 /**
  * Anonimiza/expurga as Responses cujo período de retenção LGPD expirou.
@@ -44,7 +44,7 @@ export async function anonymizeExpiredResponses(
   const ids = expiring.map((r) => r.id);
   if (ids.length === 0) return 0;
 
-  const count = await db.$transaction(async (tx) => {
+  const count = await withTenant(tenantId, async (tx) => {
     // Resumo/emoções/entidades + embedding das análises podem conter / derivar do
     // texto livre do paciente (o vetor é reversível-por-similaridade).
     await tx.aIAnalysis.updateMany({

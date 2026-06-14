@@ -14,6 +14,16 @@ const envSchema = z.object({
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string().url(),
 
+  // RLS (Row-Level Security) como 2ª camada de isolamento multitenant.
+  // Desligado por padrão: quando off, `forTenant`/`withTenant` se comportam
+  // exatamente como antes (zero mudança de comportamento). Quando ligado, cada
+  // query carrega `SET LOCAL app.tenant_id`, ativando o enforcement das policies
+  // (requer um role de runtime restrito — ver docs/RLS.md). Aceita "1"/"true".
+  RLS_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v === "1" || v === "true"),
+
   // MinIO / S3
   MINIO_ENDPOINT: z.string().url().optional(),
   MINIO_BUCKET: z.string().optional(),
