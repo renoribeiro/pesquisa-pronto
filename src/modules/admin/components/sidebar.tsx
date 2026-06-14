@@ -13,6 +13,8 @@ import {
   Settings,
   Bell,
   ShieldCheck,
+  ShieldAlert,
+  ScrollText,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -29,6 +31,8 @@ const ICONS: Record<string, LucideIcon> = {
   Settings,
   Bell,
   ShieldCheck,
+  ShieldAlert,
+  ScrollText,
 };
 
 export function Sidebar({ items }: { items: Pick<NavItem, "href" | "label" | "icon">[] }) {

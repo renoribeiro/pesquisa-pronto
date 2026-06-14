@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { UserRole } from "@prisma/client";
+import { UserRole, Prisma } from "@prisma/client";
 import { env } from "@/lib/env";
 import { requirePermission } from "@/lib/session";
 import { hashPassword } from "@/lib/password";
@@ -38,25 +38,32 @@ async function assertSectorsBelongToTenant(
   }
 }
 
+/** Tipo do cliente Prisma isolado por tenant retornado por requirePermission. */
+type Db = Awaited<ReturnType<typeof requirePermission>>["db"];
+
 /**
- * Verifica se `userId` é o último admin privilegiado (SUPER_ADMIN/CLINIC_ADMIN)
- * ativo do tenant. Usado para impedir desativar/rebaixar o único administrador
- * e travar a gestão da clínica.
+ * Aplica `update` ao usuário e RE-VERIFICA, dentro da MESMA transação
+ * Serializable, que ainda resta ≥ 1 administrador privilegiado ativo. Se a
+ * operação deixaria o tenant sem admin, lança e a transação é revertida.
+ *
+ * O re-check pós-escrita + isolamento Serializable fecha o TOCTOU em que duas
+ * desativações/rebaixamentos concorrentes leem a contagem antiga e ambos passam.
  */
-async function isLastActivePrivilegedAdmin(
-  db: Awaited<ReturnType<typeof requirePermission>>["db"],
-  userId: string,
-): Promise<boolean> {
-  const activeAdmins = await db.user.count({
-    where: { active: true, role: { in: PRIVILEGED_ROLES } },
-  });
-  if (activeAdmins > 1) return false;
-  // Há no máximo 1 admin ativo: é o último se o alvo for justamente ele.
-  const target = await db.user.findUnique({
-    where: { id: userId },
-    select: { active: true, role: true },
-  });
-  return !!target && target.active && PRIVILEGED_ROLES.includes(target.role);
+async function updateUserEnsuringAdminRemains(
+  db: Db,
+  args: Parameters<Db["user"]["update"]>[0],
+  message: string,
+): Promise<void> {
+  await db.$transaction(
+    async (tx) => {
+      await tx.user.update(args);
+      const remaining = await tx.user.count({
+        where: { active: true, role: { in: PRIVILEGED_ROLES } },
+      });
+      if (remaining === 0) throw new Error(message);
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+  );
 }
 
 export async function inviteUser(input: unknown) {
@@ -139,12 +146,18 @@ export async function toggleUser(id: string, active: boolean) {
     throw new Error("Apenas Super Admin pode gerenciar um Super Admin.");
   }
 
-  // Impede desativar o último administrador ativo da clínica.
-  if (!active && (await isLastActivePrivilegedAdmin(db, id))) {
-    throw new Error("Não é possível desativar o último administrador ativo da clínica.");
+  if (active) {
+    // Reativar não reduz o nº de admins — update simples.
+    await db.user.update({ where: { id }, data: { active } });
+  } else {
+    // Desativar: bumpa tokenVersion (logout forçado) e garante atomicamente que
+    // não fica sem administrador (TOCTOU-safe).
+    await updateUserEnsuringAdminRemains(
+      db,
+      { where: { id }, data: { active, tokenVersion: { increment: 1 } } },
+      "Não é possível desativar o último administrador ativo da clínica.",
+    );
   }
-
-  await db.user.update({ where: { id }, data: { active } });
   await audit({
     tenantId: ctx.tenantId,
     userId: ctx.userId,
@@ -190,23 +203,30 @@ export async function updateUserRole(input: unknown) {
     throw new Error("Você não pode rebaixar o seu próprio perfil de administrador.");
   }
 
-  // Impede rebaixar o último administrador ativo da clínica.
-  const demotingFromAdmin =
-    PRIVILEGED_ROLES.includes(target.role) && !PRIVILEGED_ROLES.includes(data.role);
-  if (demotingFromAdmin && (await isLastActivePrivilegedAdmin(db, data.id))) {
-    throw new Error("Não é possível rebaixar o último administrador ativo da clínica.");
-  }
-
   // H2: todos os setores devem pertencer ao tenant.
   await assertSectorsBelongToTenant(db, data.sectorIds);
 
-  await db.user.update({
+  // Bumpa o tokenVersion: mudar papel/setores revalida (invalida) sessões do usuário.
+  const updateArgs = {
     where: { id: data.id },
     data: {
       role: data.role,
       sectors: data.sectorIds ? { set: data.sectorIds.map((id) => ({ id })) } : undefined,
+      tokenVersion: { increment: 1 },
     },
-  });
+  };
+  const demotingFromAdmin =
+    PRIVILEGED_ROLES.includes(target.role) && !PRIVILEGED_ROLES.includes(data.role);
+  if (demotingFromAdmin) {
+    // Rebaixamento reduz admins — re-checa atomicamente (TOCTOU-safe).
+    await updateUserEnsuringAdminRemains(
+      db,
+      updateArgs,
+      "Não é possível rebaixar o último administrador ativo da clínica.",
+    );
+  } else {
+    await db.user.update(updateArgs);
+  }
   await audit({
     tenantId: ctx.tenantId,
     userId: ctx.userId,

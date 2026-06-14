@@ -6,6 +6,7 @@ interface AppUserFields {
   tenantId: string;
   role: UserRole;
   sectorIds: string[];
+  tokenVersion: number;
 }
 
 /**
@@ -28,12 +29,9 @@ export const authConfig = {
       if (isAdminArea) return isLoggedIn;
       return true;
     },
-    // TODO(seguranca): o JWT pode ficar "stale" — papel/setores/ativo só são
-    // relidos do banco no próximo login. Não há revalidação contra o DB
-    // (ex.: um campo `tokenVersion` no User comparado aqui para invalidar
-    // sessões após mudança de papel/desativação). Implementar quando o
-    // strategy migrar para algo com checagem por requisição, ou adicionar
-    // `tokenVersion` ao modelo User e compará-lo aqui invalidando o token.
+    // jwt edge-safe (middleware): apenas propaga os campos no login, sem acesso
+    // ao banco. A REVALIDAÇÃO contra o DB (active/role/tokenVersion → logout
+    // forçado) é feita pelo override Node deste callback em `src/auth.ts`.
     jwt({ token, user }) {
       if (user) {
         const u = user as Partial<AppUserFields>;
@@ -41,6 +39,7 @@ export const authConfig = {
         token.tenantId = u.tenantId;
         token.role = u.role;
         token.sectorIds = u.sectorIds;
+        token.tokenVersion = u.tokenVersion ?? 0;
       }
       return token;
     },

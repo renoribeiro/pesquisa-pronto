@@ -90,8 +90,10 @@ export function enqueuePing(message: string) {
   return getQueue(QUEUE_NAMES.system).add("ping", { message } satisfies PingJob);
 }
 
-export function enqueueEmail(payload: SendEmailJob) {
-  return getQueue(QUEUE_NAMES.email).add("send", payload);
+export function enqueueEmail(payload: SendEmailJob, opts?: { jobId?: string }) {
+  // jobId determinístico => BullMQ deduplica enfileiramentos idênticos (entregas
+  // duplicadas de webhook produzem o MESMO job, nunca dois e-mails).
+  return getQueue(QUEUE_NAMES.email).add("send", payload, opts);
 }
 
 export function enqueueDispatch(payload: DispatchJobPayload) {

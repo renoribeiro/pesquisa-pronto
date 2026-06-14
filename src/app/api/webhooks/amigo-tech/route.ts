@@ -1,6 +1,7 @@
 import { type NextRequest } from "next/server";
 import crypto from "crypto";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { env } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
 import { forTenant } from "@/lib/tenant";
@@ -93,30 +94,6 @@ async function handleEvent(data: z.infer<typeof eventSchema>) {
   // A partir daqui, todos os modelos com tenantId devem passar pelo guard.
   const db = forTenant(tenant.id);
 
-  // Idempotência: evita reprocessar o mesmo appointment.id (entregas duplicadas
-  // do Amigo Tech / retries). Procuramos um WebhookLog "in" já gravado para este
-  // evento + appointment.id. O guard de tenant já injeta o tenantId no where.
-  const existing = await db.webhookLog
-    .findFirst({
-      where: {
-        direction: "in",
-        event: data.event,
-        payload: {
-          path: ["appointment", "id"],
-          equals: data.appointment.id,
-        },
-      },
-      select: { id: true },
-    })
-    .catch((err: unknown) => {
-      logger.error("amigo-tech webhook: falha ao checar idempotência", err);
-      return null;
-    });
-
-  if (existing) {
-    return Response.json({ ok: true, duplicate: true });
-  }
-
   // Find active survey (first active survey linked to the sector if possible)
   const survey = await db.survey.findFirst({
     where: { status: "PUBLISHED" },
@@ -127,33 +104,59 @@ async function handleEvent(data: z.infer<typeof eventSchema>) {
     return Response.json({ ok: true, note: "No active survey" });
   }
 
-  // Log webhook (marca o appointment como processado — base da idempotência).
-  await db.webhookLog
-    .create({
+  // Idempotência DURÁVEL: o WebhookLog (persistido em Postgres) é a fonte de
+  // verdade do dedup e gateia o EFEITO. Reivindicamos o evento ANTES de enviar —
+  // o índice @@unique([tenantId, externalEventId]) garante que só a primeira
+  // entrega vença; reentregas (mesmo após >1h, fora da janela de retenção do job
+  // no Redis) batem em P2002 e retornam duplicado SEM reenviar. Isso fecha a
+  // janela de e-mail duplicado em retries tardios que o dedup por jobId (limitado
+  // ao tempo de vida do job no Redis) não cobre sozinho.
+  let logId: string;
+  try {
+    const log = await db.webhookLog.create({
       data: {
         tenantId: tenant.id,
         event: data.event,
+        externalEventId: data.appointment.id,
         payload: data as object,
         direction: "in",
         success: true,
       },
-    })
-    .catch((err: unknown) => {
-      // Não engolir silenciosamente: registrar para diagnóstico.
-      logger.error("amigo-tech webhook: falha ao gravar WebhookLog", err);
+      select: { id: true },
     });
+    logId = log.id;
+  } catch (err: unknown) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+      return Response.json({ ok: true, duplicate: true });
+    }
+    logger.error("amigo-tech webhook: falha ao gravar WebhookLog", err);
+    return Response.json({ error: "Internal error" }, { status: 500 });
+  }
 
   // Slug é controlado, mas codificamos por segurança ao montar a URL.
   const surveyUrl = `${env.APP_URL}/p/${encodeURIComponent(survey.slug)}`;
-
-  // Send email if patient has email
   if (data.patient.email) {
-    await enqueueEmail({
-      to: data.patient.email,
-      subject: `Pesquisa de satisfação — ${survey.title}`,
-      html: buildEmail(survey.title, data.patient.name, surveyUrl),
-      text: `Olá${data.patient.name ? ` ${data.patient.name}` : ""}! Responda nossa pesquisa: ${surveyUrl}`,
-    });
+    try {
+      // jobId determinístico => 2ª camada de dedup (Redis): mesmo sob corrida ou
+      // reenvio pós-rollback dentro da janela do job, o BullMQ não duplica.
+      await enqueueEmail(
+        {
+          to: data.patient.email,
+          subject: `Pesquisa de satisfação — ${survey.title}`,
+          html: buildEmail(survey.title, data.patient.name, surveyUrl),
+          text: `Olá${data.patient.name ? ` ${data.patient.name}` : ""}! Responda nossa pesquisa: ${surveyUrl}`,
+        },
+        { jobId: `amigo:${tenant.id}:${data.appointment.id}` },
+      );
+    } catch (err) {
+      // Enfileiramento falhou: desfaz o claim para que a reentrega do provedor
+      // reprocesse (evita perder o e-mail permanentemente). Pior caso sob corrida
+      // — outra entrega já havia retornado "duplicate" — é um e-mail adiado até a
+      // reentrega disparada pelo 500 abaixo; auto-curável e sem duplicidade.
+      logger.error("amigo-tech webhook: falha ao enfileirar e-mail; revertendo claim", err);
+      await db.webhookLog.delete({ where: { id: logId } }).catch(() => {});
+      return Response.json({ error: "Internal error" }, { status: 500 });
+    }
   }
 
   return Response.json({ ok: true, surveyId: survey.id });

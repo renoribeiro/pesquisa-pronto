@@ -78,9 +78,20 @@ export async function requestPasswordReset(input: {
   return genericOk;
 }
 
+const STRONG_PASSWORD_MESSAGE =
+  "A senha deve ter ao menos 10 caracteres, incluindo uma letra minúscula, uma maiúscula e um dígito.";
+
+const strongPassword = z
+  .string()
+  .min(10, STRONG_PASSWORD_MESSAGE)
+  .refine(
+    (value) => /[a-z]/.test(value) && /[A-Z]/.test(value) && /[0-9]/.test(value),
+    STRONG_PASSWORD_MESSAGE,
+  );
+
 const resetSchema = z.object({
   token: z.string().min(1),
-  password: z.string().min(8, "A senha deve ter ao menos 8 caracteres"),
+  password: strongPassword,
 });
 
 /** Confirma o reset com o token recebido por email. */
@@ -101,10 +112,33 @@ export async function resetPassword(input: {
   }
 
   const passwordHash = await hashPassword(parsed.data.password);
-  await prisma.$transaction([
-    prisma.user.update({ where: { id: record.userId }, data: { passwordHash } }),
-    prisma.passwordReset.update({ where: { id: record.id }, data: { usedAt: new Date() } }),
-  ]);
+  // Consome o token de forma ATÔMICA: o updateMany com `usedAt: null` é a guarda
+  // (lock de linha); sob corrida, apenas uma requisição reivindica (count 1) e
+  // troca a senha — a outra recebe count 0 e é rejeitada. Evita TOCTOU de
+  // duplo-uso do token de reset.
+  const claimed = await prisma.$transaction(async (tx) => {
+    const claim = await tx.passwordReset.updateMany({
+      where: { id: record.id, usedAt: null, expiresAt: { gt: new Date() } },
+      data: { usedAt: new Date() },
+    });
+    if (claim.count === 0) return false;
+    // Recusa se o usuário foi desativado após a emissão do link: um titular
+    // inativo não deve poder (re)definir senha e recuperar acesso.
+    const target = await tx.user.findUnique({
+      where: { id: record.userId },
+      select: { active: true },
+    });
+    if (!target || !target.active) return false;
+    // BUMP do tokenVersion: redefinir a senha invalida sessões antigas (logout forçado).
+    await tx.user.update({
+      where: { id: record.userId },
+      data: { passwordHash, tokenVersion: { increment: 1 } },
+    });
+    return true;
+  });
+  if (!claimed) {
+    return { ok: false, message: "Link inválido ou expirado." };
+  }
 
   await audit({
     tenantId: record.tenantId,

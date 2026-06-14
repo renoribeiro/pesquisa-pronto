@@ -215,8 +215,9 @@ model User {
   passwordHash String
   role         UserRole  @default(VIEWER)
   active       Boolean   @default(true)
-  totpSecret   String?
+  totpSecret   String? // cifrado em repouso (AES-256-GCM) via @/lib/crypto
   totpEnabled  Boolean   @default(false)
+  tokenVersion Int       @default(0) // bump invalida sessões JWT existentes
   lastLoginAt  DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
@@ -573,10 +574,11 @@ model Response {
   durationMs Int?
   npsScore   Int? // denormalizado para analytics rápido
   completed  Boolean     @default(false)
-  consentAt  DateTime?
-  ipHash     String? // IP hasheado (LGPD)
-  anonymous  Boolean     @default(false)
-  createdAt  DateTime    @default(now())
+  consentAt    DateTime?
+  ipHash       String? // IP hasheado (LGPD)
+  anonymous    Boolean     @default(false)
+  anonymizedAt DateTime? // marcada quando expurgada/anonimizada pela retenção LGPD
+  createdAt    DateTime    @default(now())
 
   answers    Answer[]
   aiAnalysis AIAnalysis?
@@ -842,15 +844,17 @@ model WebhookLog {
   id         String           @id @default(cuid())
   tenantId   String
   tenant     Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  endpointId String?
-  endpoint   WebhookEndpoint? @relation(fields: [endpointId], references: [id], onDelete: SetNull)
-  direction  String // "in" | "out"
-  event      String
-  payload    Json?
-  statusCode Int?
-  success    Boolean          @default(true)
-  createdAt  DateTime         @default(now())
+  endpointId      String?
+  endpoint        WebhookEndpoint? @relation(fields: [endpointId], references: [id], onDelete: SetNull)
+  direction       String // "in" | "out"
+  event           String
+  externalEventId String? // id do evento externo (idempotência de entrada)
+  payload         Json?
+  statusCode      Int?
+  success         Boolean          @default(true)
+  createdAt       DateTime         @default(now())
 
+  @@unique([tenantId, externalEventId])
   @@index([tenantId])
   @@index([endpointId])
   @@map("webhook_logs")

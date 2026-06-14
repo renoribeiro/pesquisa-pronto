@@ -22,6 +22,9 @@ const envSchema = z.object({
 
   // Auth — segredo de sessão/JWT. Obrigatório em produção (validado abaixo).
   AUTH_SECRET: z.string().min(1).optional(),
+  // Cifra de dados em repouso (AES-256-GCM). Em dev cai para AUTH_SECRET;
+  // obrigatório em produção (validado abaixo).
+  DATA_ENC_KEY: z.string().min(16).optional(),
 
   // IA — opcionais: features de IA (resumos, classificação) ficam desativadas
   // quando ausentes; cada ponto de uso valida a presença da chave correspondente.
@@ -64,6 +67,14 @@ const envSchema = z.object({
         code: z.ZodIssueCode.custom,
         path: ["AUTH_SECRET"],
         message: "AUTH_SECRET é obrigatório em produção.",
+      });
+    }
+    // DATA_ENC_KEY é obrigatório em produção (cifra de segredos em repouso).
+    if (!val.DATA_ENC_KEY) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["DATA_ENC_KEY"],
+        message: "DATA_ENC_KEY é obrigatório em produção (cifra de dados em repouso).",
       });
     }
     // Credenciais/endpoint de armazenamento S3/MinIO são obrigatórios em produção

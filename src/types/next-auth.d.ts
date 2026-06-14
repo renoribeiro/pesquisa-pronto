@@ -19,6 +19,7 @@ declare module "next-auth" {
     tenantId: string;
     role: UserRole;
     sectorIds: string[];
+    tokenVersion: number;
   }
 }
 
@@ -28,5 +29,6 @@ declare module "next-auth/jwt" {
     tenantId: string;
     role: UserRole;
     sectorIds: string[];
+    tokenVersion: number;
   }
 }

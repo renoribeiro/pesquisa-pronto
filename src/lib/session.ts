@@ -1,8 +1,12 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { forTenant } from "@/lib/tenant";
-import { scopeOf, type Permission, type Scope } from "@/lib/rbac";
+import { scopeOf, type Permission } from "@/lib/rbac";
 import type { UserRole } from "@prisma/client";
+
+// Helpers de escopo de setor (puros) vivem em @/lib/scope para serem testáveis
+// sem arrastar as dependências de auth/Next. Re-exportados aqui por conveniência.
+export { surveySectorWhere, responseSectorWhere } from "@/lib/scope";
 
 export interface SessionContext {
   userId: string;
@@ -58,31 +62,4 @@ export async function requirePermission(permission: Permission) {
 export async function requireTenantDb() {
   const ctx = await requireSession();
   return { ctx, db: forTenant(ctx.tenantId) };
-}
-
-// Sentinela que não casa nenhum id real — usada quando um SECTOR_MANAGER não
-// tem setores atribuídos: nesse caso ele não deve ver nada (e não "tudo").
-const NO_MATCH = "__no_sector__";
-
-/**
- * Filtro Prisma de escopo de setor para consultas sobre **Survey**.
- * - `scope === "all"`  → `{}` (sem restrição além do tenant).
- * - `scope === "sector"` → restringe às pesquisas dos setores do usuário
- *   (relação N-N `Survey.sectors`). Setores vazios = nada visível.
- */
-export function surveySectorWhere(ctx: SessionContext, scope: Scope) {
-  if (scope !== "sector") return {};
-  const ids = ctx.sectorIds.length ? ctx.sectorIds : [NO_MATCH];
-  return { sectors: { some: { id: { in: ids } } } } as const;
-}
-
-/**
- * Filtro Prisma de escopo de setor para consultas sobre **Response**
- * (e modelos que se ligam a uma pesquisa, ex.: Answer/AIAnalysis via `survey`).
- * Filtra pela relação de setores da pesquisa associada.
- */
-export function responseSectorWhere(ctx: SessionContext, scope: Scope) {
-  if (scope !== "sector") return {};
-  const ids = ctx.sectorIds.length ? ctx.sectorIds : [NO_MATCH];
-  return { survey: { sectors: { some: { id: { in: ids } } } } } as const;
 }

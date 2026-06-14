@@ -54,6 +54,18 @@ export const NAV_ITEMS: NavItem[] = [
     visible: (r) => can(r, "system:configure"),
   },
   {
+    href: "/admin/lgpd",
+    label: "LGPD",
+    icon: "ShieldAlert",
+    visible: (r) => can(r, "system:configure"),
+  },
+  {
+    href: "/admin/audit",
+    label: "Auditoria",
+    icon: "ScrollText",
+    visible: (r) => can(r, "system:configure"),
+  },
+  {
     href: "/admin/alerts",
     label: "Alertas",
     icon: "Bell",

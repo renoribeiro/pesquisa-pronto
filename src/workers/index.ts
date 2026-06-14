@@ -56,24 +56,34 @@ for (const [queueName, processor] of Object.entries(PROCESSORS)) {
 
 console.log("🛠  Worker iniciado. Filas:", Object.values(QUEUE_NAMES).join(", "));
 
-// Agenda a checagem periódica de tendência negativa (alertas preditivos).
-// O dedupe de repeatable do BullMQ é pela repeat-key (nome + opções), NÃO pelo
-// jobId — então, se o intervalo mudar num deploy futuro, o repeatable antigo
-// ficaria órfão. Por isso removemos os "trend-check" existentes antes de
-// re-adicionar, garantindo um único scheduler ativo.
+// Agenda os jobs periódicos do scheduler. O dedupe de repeatable do BullMQ é
+// pela repeat-key (nome + opções), NÃO pelo jobId — então, se o intervalo mudar
+// num deploy futuro, o repeatable antigo ficaria órfão. Removemos os existentes
+// (por nome) antes de re-adicionar, garantindo um único de cada ativo.
 const schedulerQueue = getQueue(QUEUE_NAMES.scheduler);
+const REPEATABLES: { name: string; every: number; label: string }[] = [
+  { name: "trend-check", every: 60 * 60 * 1000, label: "1h" }, // tendência negativa de NPS
+  { name: "retention", every: 24 * 60 * 60 * 1000, label: "24h" }, // anonimização LGPD
+];
 schedulerQueue
   .getRepeatableJobs()
   .then((jobs) =>
     Promise.all(
       jobs
-        .filter((j) => j.name === "trend-check")
+        .filter((j) => REPEATABLES.some((r) => r.name === j.name))
         .map((j) => schedulerQueue.removeRepeatableByKey(j.key)),
     ),
   )
-  .then(() => schedulerQueue.add("trend-check", {}, { repeat: { every: 60 * 60 * 1000 } }))
-  .then(() => console.log("[worker:scheduler] trend-check agendado (a cada 1h)"))
-  .catch((e) => console.error("[worker:scheduler] falha ao agendar trend-check:", e));
+  .then(() =>
+    Promise.all(REPEATABLES.map((r) => schedulerQueue.add(r.name, {}, { repeat: { every: r.every } }))),
+  )
+  .then(() =>
+    console.log(
+      "[worker:scheduler] agendados:",
+      REPEATABLES.map((r) => `${r.name} (${r.label})`).join(", "),
+    ),
+  )
+  .catch((e) => console.error("[worker:scheduler] falha ao agendar repeatables:", e));
 
 async function shutdown() {
   console.log("\n[worker] encerrando...");
