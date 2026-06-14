@@ -6,6 +6,7 @@ import { getSmsProvider } from "@/lib/channels/sms";
 import { enqueueEmail } from "@/server/queues";
 import type { DispatchJobPayload } from "@/server/queues";
 import { escapeHtml, safeHref } from "@/lib/html";
+import { logger } from "@/lib/logger";
 
 export async function processDispatch(job: Job): Promise<unknown> {
   if (job.name !== "send") return null;
@@ -28,7 +29,7 @@ async function sendDispatchJob(
   });
 
   if (!dispatchJob) {
-    console.warn(`[worker:dispatch] job ${dispatchJobId} não encontrado`);
+    logger.warn(`[worker:dispatch] job ${dispatchJobId} não encontrado`);
     return null;
   }
 
@@ -37,7 +38,7 @@ async function sendDispatchJob(
   // Jobs já SENT/terminais não são reprocessados (idempotência).
   const RETRIABLE_STATUSES = ["PENDING", "SENDING", "FAILED"] as const;
   if (!RETRIABLE_STATUSES.includes(dispatchJob.status as (typeof RETRIABLE_STATUSES)[number])) {
-    console.log(`[worker:dispatch] job ${dispatchJobId} já processado: ${dispatchJob.status}`);
+    logger.info(`[worker:dispatch] job ${dispatchJobId} já processado: ${dispatchJob.status}`);
     return null;
   }
 
@@ -110,7 +111,7 @@ async function sendDispatchJob(
       data: { sent: { increment: 1 } },
     });
 
-    console.log(`[worker:dispatch] job ${dispatchJobId} enviado`);
+    logger.info(`[worker:dispatch] job ${dispatchJobId} enviado`);
     return { success: true };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);

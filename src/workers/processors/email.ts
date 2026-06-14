@@ -1,5 +1,6 @@
 import type { Job } from "bullmq";
 import { sendMail } from "@/lib/mailer";
+import { logger } from "@/lib/logger";
 import type { SendEmailJob } from "@/server/queues";
 
 /** Processa jobs da fila de email. */
@@ -12,7 +13,7 @@ export async function processEmail(job: Job): Promise<void> {
     html: data.html,
     text: data.text,
   });
-  console.log(
+  logger.info(
     `[worker:email] enviado job ${job.id} → ${Array.isArray(data.to) ? data.to.join(",") : data.to}`,
   );
 }

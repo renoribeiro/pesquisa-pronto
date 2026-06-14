@@ -2,6 +2,7 @@ import type { Job } from "bullmq";
 import ExcelJS from "exceljs";
 import { forTenant } from "@/lib/tenant";
 import { putObject, getObjectUrl } from "@/lib/storage";
+import { logger } from "@/lib/logger";
 import type { GenerateReportJob } from "@/server/queues";
 
 export async function processReport(job: Job): Promise<unknown> {
@@ -14,7 +15,7 @@ async function generateReport({ reportId, tenantId }: GenerateReportJob) {
 
   const report = await db.report.findFirst({ where: { id: reportId } });
   if (!report) {
-    console.warn(`[worker:reports] report ${reportId} não encontrado`);
+    logger.warn(`[worker:reports] report ${reportId} não encontrado`);
     return null;
   }
 
@@ -51,7 +52,7 @@ async function generateReport({ reportId, tenantId }: GenerateReportJob) {
       },
     });
 
-    console.log(`[worker:reports] relatório ${reportId} gerado: ${fileUrl}`);
+    logger.info(`[worker:reports] relatório ${reportId} gerado: ${fileUrl}`);
     return { reportId, fileUrl };
   } catch (err) {
     await db.report.update({ where: { id: reportId }, data: { status: "failed" } });

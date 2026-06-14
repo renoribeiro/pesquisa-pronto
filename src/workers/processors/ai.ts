@@ -1,5 +1,7 @@
 import type { Job } from "bullmq";
 import { forTenant } from "@/lib/tenant";
+import { logger } from "@/lib/logger";
+import { captureException, captureMessage } from "@/lib/observability";
 import { analyzeSentiment, generateExecutiveSummary, generateEmbedding } from "@/lib/ai";
 import { getNpsSummary } from "@/modules/analytics/queries";
 import { extractTopicClusters } from "@/modules/analytics/topics";
@@ -14,7 +16,7 @@ export async function processAi(job: Job): Promise<unknown> {
     case "extract-topics":
       return extractTopics(job.data as ExtractTopicsJob);
     default:
-      console.warn(`[worker:ai] job desconhecido: ${job.name}`);
+      captureMessage(`[worker:ai] job desconhecido: ${job.name}`);
       return null;
   }
 }
@@ -32,7 +34,7 @@ async function analyzeResponse({ responseId, tenantId }: AnalyzeResponseJob) {
     },
   });
   if (!response) {
-    console.warn(`[worker:ai] response ${responseId} não encontrada`);
+    logger.warn(`[worker:ai] response ${responseId} não encontrada`);
     return null;
   }
 
@@ -48,7 +50,7 @@ async function analyzeResponse({ responseId, tenantId }: AnalyzeResponseJob) {
     .filter((t): t is string => t !== null && t.trim().length > 0);
 
   if (textAnswers.length === 0) {
-    console.log(`[worker:ai] response ${responseId} sem respostas de texto para analisar`);
+    logger.info(`[worker:ai] response ${responseId} sem respostas de texto para analisar`);
     return null;
   }
 
@@ -87,10 +89,10 @@ async function analyzeResponse({ responseId, tenantId }: AnalyzeResponseJob) {
       tenantId,
     );
 
-    console.log(`[worker:ai] análise e embedding concluídos: response ${responseId} → ${result.sentiment}`);
+    logger.info(`[worker:ai] análise e embedding concluídos: response ${responseId} → ${result.sentiment}`);
     return result;
   } catch (err) {
-    console.error(`[worker:ai] erro ao analisar response ${responseId}:`, err);
+    captureException(err, { context: "analyze-response", responseId, tenantId });
     throw err;
   }
 }
@@ -152,10 +154,10 @@ async function generateSummary({ tenantId, periodStart, periodEnd, generatedBy }
       },
     });
 
-    console.log(`[worker:ai] resumo executivo gerado para ${tenantId}`);
+    logger.info(`[worker:ai] resumo executivo gerado para ${tenantId}`);
     return { summaryLength: summaryText.length };
   } catch (err) {
-    console.error(`[worker:ai] erro ao gerar resumo:`, err);
+    captureException(err, { context: "generate-summary", tenantId });
     throw err;
   }
 }
@@ -171,10 +173,10 @@ async function extractTopics({ tenantId, surveyId, periodStart, periodEnd }: Ext
       surveyIds: surveyId ? [surveyId] : null,
       surveyId: surveyId ?? null,
     });
-    console.log(`[worker:ai] extract-topics: ${count} temas para tenant ${tenantId}`);
+    logger.info(`[worker:ai] extract-topics: ${count} temas para tenant ${tenantId}`);
     return { topics: count };
   } catch (err) {
-    console.error(`[worker:ai] erro ao extrair temas para ${tenantId}:`, err);
+    captureException(err, { context: "extract-topics", tenantId });
     throw err;
   }
 }

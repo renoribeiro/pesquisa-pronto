@@ -2,6 +2,8 @@ import "dotenv/config";
 import { Worker, type Job, type Processor } from "bullmq";
 import IORedis from "ioredis";
 import { env } from "@/lib/env";
+import { logger } from "@/lib/logger";
+import { captureException } from "@/lib/observability";
 import { QUEUE_NAMES, getQueue, type PingJob } from "@/server/queues";
 import { processEmail } from "@/workers/processors/email";
 
@@ -20,7 +22,7 @@ const connection = new IORedis(env.REDIS_URL, {
 async function processSystem(job: Job) {
   if (job.name === "ping") {
     const data = job.data as PingJob;
-    console.log(`[worker:system] ping: "${data.message}" (job ${job.id})`);
+    logger.info(`[worker:system] ping: "${data.message}" (job ${job.id})`);
     return { pong: data.message };
   }
   return null;
@@ -49,12 +51,17 @@ for (const [queueName, processor] of Object.entries(PROCESSORS)) {
   const concurrency = queueName === QUEUE_NAMES.scheduler ? 1 : 5;
   const worker = new Worker(queueName, processor, { connection, concurrency });
   worker.on("failed", (job, err) => {
-    console.error(`[worker:${queueName}] job ${job?.id} (${job?.name}) falhou:`, err.message);
+    captureException(err, {
+      queue: queueName,
+      jobId: job?.id,
+      jobName: job?.name,
+      attemptsMade: job?.attemptsMade,
+    });
   });
   workers.push(worker);
 }
 
-console.log("🛠  Worker iniciado. Filas:", Object.values(QUEUE_NAMES).join(", "));
+logger.info(`🛠  Worker iniciado. Filas: ${Object.values(QUEUE_NAMES).join(", ")}`);
 
 // Agenda os jobs periódicos do scheduler. O dedupe de repeatable do BullMQ é
 // pela repeat-key (nome + opções), NÃO pelo jobId — então, se o intervalo mudar
@@ -78,15 +85,14 @@ schedulerQueue
     Promise.all(REPEATABLES.map((r) => schedulerQueue.add(r.name, {}, { repeat: { every: r.every } }))),
   )
   .then(() =>
-    console.log(
-      "[worker:scheduler] agendados:",
-      REPEATABLES.map((r) => `${r.name} (${r.label})`).join(", "),
+    logger.info(
+      `[worker:scheduler] agendados: ${REPEATABLES.map((r) => `${r.name} (${r.label})`).join(", ")}`,
     ),
   )
-  .catch((e) => console.error("[worker:scheduler] falha ao agendar repeatables:", e));
+  .catch((e) => captureException(e, { context: "scheduler-repeatables" }));
 
 async function shutdown() {
-  console.log("\n[worker] encerrando...");
+  logger.info("[worker] encerrando...");
   await Promise.all(workers.map((w) => w.close()));
   await connection.quit();
   process.exit(0);

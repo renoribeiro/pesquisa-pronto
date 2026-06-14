@@ -64,6 +64,11 @@ const envSchema = z.object({
   // Webhooks
   AMIGO_TECH_WEBHOOK_SECRET: z.string().optional(),
 
+  // Observabilidade — DSN do coletor de erros (ex.: Sentry). Opcional; quando
+  // ausente, o seam de observabilidade apenas registra via logger. Ver
+  // src/lib/observability.ts.
+  SENTRY_DSN: z.string().optional(),
+
   // Seed
   DEFAULT_TENANT_NAME: z.string().default("Prontoclínica de Fortaleza"),
   DEFAULT_TENANT_SLUG: z.string().default("prontoclinica"),
