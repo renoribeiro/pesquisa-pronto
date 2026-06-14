@@ -1,7 +1,13 @@
 import type { PrismaClient } from "@prisma/client";
 import type { TenantClient } from "@/lib/tenant";
+import { cached, cacheVersion } from "@/lib/cache";
+import { NPS_CACHE_NS, npsCacheKey } from "@/lib/cache-key";
 
 export type DbClient = PrismaClient | TenantClient;
+
+// Re-export para conveniência dos invalidadores (ex.: responses/actions).
+export { NPS_CACHE_NS };
+const NPS_CACHE_TTL_SECONDS = 300; // ~5 min (alinhado ao plano)
 
 export interface NpsSummary {
   score: number;
@@ -66,6 +72,25 @@ export async function getNpsSummary(
 
   const score = Math.round(((promoters - detractors) / scores.length) * 100);
   return { score, total: scores.length, promoters, passives, detractors };
+}
+
+/**
+ * Versão cacheada de `getNpsSummary` (~5 min) para os caminhos de UI do
+ * dashboard. Invalida por versão a cada nova resposta (ver bumpCacheVersion em
+ * responses/actions). O cálculo direto (`getNpsSummary`) segue disponível para o
+ * worker e para quem precisa de leitura sempre fresca.
+ */
+export async function getNpsSummaryCached(
+  db: DbClient,
+  tenantId: string,
+  surveyId?: string,
+  sectorWhere: SectorWhere = {},
+): Promise<NpsSummary> {
+  const version = await cacheVersion(NPS_CACHE_NS, tenantId);
+  const key = npsCacheKey(version, tenantId, surveyId, sectorWhere);
+  return cached(key, NPS_CACHE_TTL_SECONDS, () =>
+    getNpsSummary(db, tenantId, surveyId, sectorWhere),
+  );
 }
 
 export async function getResponsesByDay(

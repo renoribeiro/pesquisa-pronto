@@ -10,6 +10,9 @@ import { parseUserAgent } from "@/lib/user-agent";
 import { enqueueAnalyzeResponse } from "@/server/queues";
 import { checkAlerts } from "@/modules/alerts/actions";
 import { rateLimit } from "@/lib/rate-limit";
+import { bumpCacheVersion } from "@/lib/cache";
+import { NPS_CACHE_NS } from "@/modules/analytics/queries";
+import { captureException } from "@/lib/observability";
 
 const answerSchema = z.object({
   questionId: z.string(),
@@ -210,11 +213,15 @@ export async function submitResponse(input: unknown): Promise<SubmitResult> {
     throw err;
   }
 
+  // Nova resposta altera o NPS agregado: invalida o cache do dashboard (no-op
+  // em falha de Redis; o TTL de ~5min é o backstop).
+  await bumpCacheVersion(NPS_CACHE_NS, tenantId);
+
   // Check and trigger alerts
   try {
     await checkAlerts(tenantId, d.surveyId, npsScore, response.id);
   } catch (err) {
-    console.error(`[submitResponse] erro ao checar alertas:`, err);
+    captureException(err, { context: "submitResponse:checkAlerts", tenantId, surveyId: d.surveyId });
   }
 
   // Enqueue AI analysis (non-blocking)

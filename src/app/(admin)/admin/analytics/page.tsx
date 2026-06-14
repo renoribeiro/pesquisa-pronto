@@ -1,6 +1,6 @@
 import { requirePermission, responseSectorWhere, surveySectorWhere } from "@/lib/session";
 import {
-  getNpsSummary,
+  getNpsSummaryCached,
   getResponsesByDay,
   getChannelBreakdown,
   getRecentResponses,
@@ -38,7 +38,7 @@ export default async function AnalyticsPage() {
   const showTenantAggregates = scope === "all";
 
   const [nps, trend, channels, recent, topics, entities, aiCost] = await Promise.all([
-    getNpsSummary(db, ctx.tenantId, undefined, sectorWhere),
+    getNpsSummaryCached(db, ctx.tenantId, undefined, sectorWhere),
     getResponsesByDay(db, ctx.tenantId, 30, undefined, sectorWhere),
     getChannelBreakdown(db, ctx.tenantId, undefined, sectorWhere),
     getRecentResponses(db, ctx.tenantId, 10, undefined, sectorWhere),
