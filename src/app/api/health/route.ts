@@ -12,7 +12,16 @@ import { getAllQueueMetrics, summarizeQueueHealth, type QueueMetric } from "@/se
 
 type Check = "ok" | "error";
 
-/** Resolve com timeout: se a verificação demorar demais, conta como erro. */
+/**
+ * Resolve com timeout: se a verificação demorar demais, conta como erro.
+ *
+ * Contrato: limita a LATÊNCIA DA ROTA, não cancela a operação subjacente
+ * (Promise.race não cancela o perdedor). É deliberado: as probes são one-shot e
+ * triviais (SELECT 1 / PING / HeadBucket) e suas conexões voltam ao pool ao
+ * concluir — não há vazamento acumulável. Um `commandTimeout` global no cliente
+ * IORedis cancelaria os comandos BLOQUEANTES do BullMQ (compartilham a conexão),
+ * o que seria uma regressão pior; por isso o bound fica no nível da rota.
+ */
 async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   return Promise.race([
     p,

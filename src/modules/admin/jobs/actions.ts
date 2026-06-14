@@ -31,6 +31,33 @@ function assertValidQueue(name: string): asserts name is QueueName {
   }
 }
 
+/** Mascara um endereço de e-mail preservando só o suficiente para diagnóstico. */
+function maskEmail(value: unknown): string {
+  if (typeof value !== "string") return "[redigido]";
+  const at = value.indexOf("@");
+  if (at <= 0) return "[redigido]";
+  return `${value.slice(0, Math.min(2, at))}***${value.slice(at)}`;
+}
+
+/**
+ * Minimização de dados (LGPD): a fila `email` carrega PII no payload (e-mail do
+ * destinatário e, no corpo, o primeiro nome). Como o painel só é acessível ao
+ * SUPER_ADMIN mas ainda assim transmite o payload ao browser, redigimos os
+ * campos sensíveis e descartamos corpo (html/text) — mantendo o suficiente para
+ * diagnóstico. As demais filas só carregam tenantId + ids (não-PII), preservados.
+ */
+function sanitizeJobData(queue: QueueName, data: unknown): unknown {
+  if (queue !== QUEUE_NAMES.email || data === null || typeof data !== "object") {
+    return data;
+  }
+  const d = data as Record<string, unknown>;
+  return {
+    to: Array.isArray(d.to) ? d.to.map(maskEmail) : maskEmail(d.to),
+    subject: d.subject,
+    _redigido: ["html", "text"],
+  };
+}
+
 /**
  * Visão geral das filas (profundidade) + jobs FALHOS (DLQ) de todas as filas.
  * SUPER_ADMIN apenas: filas BullMQ são globais (cross-tenant).
@@ -52,7 +79,7 @@ export async function getJobsOverview(): Promise<JobsOverview> {
         attemptsMade: j.attemptsMade,
         createdAt: j.timestamp ? new Date(j.timestamp).toISOString() : null,
         failedAt: j.finishedOn ? new Date(j.finishedOn).toISOString() : null,
-        data: j.data,
+        data: sanitizeJobData(queue, j.data),
       });
     }
   }
